@@ -7,35 +7,23 @@
 //! more 'stuff' here in the future. It does not have a dependency on
 //! LLVM.
 
-#![doc(html_root_url = "https://doc.rust-lang.org/nightly/nightly-rustc/")]
-#![feature(bool_to_option)]
-#![feature(nll)]
-#![feature(never_type)]
-#![feature(associated_type_bounds)]
-#![feature(exhaustive_patterns)]
-#![feature(min_specialization)]
-#![feature(step_trait)]
+// tidy-alphabetical-start
+#![cfg_attr(bootstrap, feature(debug_closure_helpers))]
+#![feature(iter_intersperse)]
+// tidy-alphabetical-end
 
-use std::iter::FromIterator;
 use std::path::{Path, PathBuf};
 
-#[macro_use]
-extern crate rustc_macros;
-
-#[macro_use]
-extern crate tracing;
-
-pub mod abi;
 pub mod asm;
+pub mod callconv;
+pub mod json;
 pub mod spec;
+pub mod target_features;
 
 #[cfg(test)]
 mod tests;
 
-/// Requirements for a `StableHashingContext` to be used in this crate.
-/// This is a hack to allow using the `HashStable_Generic` derive macro
-/// instead of implementing everything in `rustc_middle`.
-pub trait HashStableContext {}
+use rustc_abi::HashStableContext;
 
 /// The name of rustc's own place to organize libraries.
 ///
@@ -46,17 +34,13 @@ const RUST_LIB_DIR: &str = "rustlib";
 ///
 /// For example: `target_sysroot_path("/usr", "x86_64-unknown-linux-gnu")` =>
 /// `"lib*/rustlib/x86_64-unknown-linux-gnu"`.
-pub fn target_rustlib_path(sysroot: &Path, target_triple: &str) -> PathBuf {
-    let libdir = find_libdir(sysroot);
-    PathBuf::from_iter([
-        Path::new(libdir.as_ref()),
-        Path::new(RUST_LIB_DIR),
-        Path::new(target_triple),
-    ])
+pub fn relative_target_rustlib_path(sysroot: &Path, target_triple: &str) -> PathBuf {
+    let libdir = find_relative_libdir(sysroot);
+    Path::new(libdir.as_ref()).join(RUST_LIB_DIR).join(target_triple)
 }
 
 /// The name of the directory rustc expects libraries to be located.
-fn find_libdir(sysroot: &Path) -> std::borrow::Cow<'static, str> {
+fn find_relative_libdir(sysroot: &Path) -> std::borrow::Cow<'static, str> {
     // FIXME: This is a quick hack to make the rustc binary able to locate
     // Rust libraries in Linux environments where libraries might be installed
     // to lib64/lib32. This would be more foolproof by basing the sysroot off
@@ -84,3 +68,127 @@ fn find_libdir(sysroot: &Path) -> std::borrow::Cow<'static, str> {
         Some(libdir) => libdir.into(),
     }
 }
+
+macro_rules! target_spec_enum {
+    (
+        $( #[$attr:meta] )*
+        pub enum $Name:ident {
+            $(
+                $( #[$variant_attr:meta] )*
+                $Variant:ident = $string:literal,
+            )*
+        }
+        parse_error_type = $parse_error_type:literal;
+    ) => {
+        $( #[$attr] )*
+        #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
+        #[derive(schemars::JsonSchema)]
+        pub enum $Name {
+            $(
+                $( #[$variant_attr] )*
+                #[serde(rename = $string)] // for JSON schema generation only
+                $Variant,
+            )*
+        }
+
+        impl FromStr for $Name {
+            type Err = String;
+
+            fn from_str(s: &str) -> Result<Self, Self::Err> {
+                Ok(match s {
+                    $( $string => Self::$Variant, )*
+                    _ => {
+                        let all = [$( concat!("'", $string, "'") ),*].join(", ");
+                        return Err(format!("invalid {}: '{s}'. allowed values: {all}", $parse_error_type));
+                    }
+                })
+            }
+        }
+
+        impl $Name {
+            pub const ALL: &'static [$Name] = &[ $( $Name::$Variant, )* ];
+            pub fn desc(&self) -> &'static str {
+                match self {
+                    $( Self::$Variant => $string, )*
+                }
+            }
+        }
+
+        crate::target_spec_enum!(@common_impls $Name);
+    };
+
+    (
+        $( #[$attr:meta] )*
+        pub enum $Name:ident {
+            $(
+                $( #[$variant_attr:meta] )*
+                $Variant:ident = $string:literal,
+            )*
+        }
+        $( #[$other_variant_attr:meta] )*
+        other_variant = $OtherVariant:ident;
+    ) => {
+        $( #[$attr] )*
+        #[derive(Clone, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
+        pub enum $Name {
+            $(
+                $( #[$variant_attr:meta] )*
+                $Variant,
+            )*
+            $( #[$other_variant_attr] )*
+            $OtherVariant(crate::spec::StaticCow<str>),
+        }
+
+        impl schemars::JsonSchema for $Name {
+            fn schema_name() -> std::borrow::Cow<'static, str> {
+                std::borrow::Cow::Borrowed(stringify!($Name))
+            }
+
+            fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+                schemars::json_schema!({
+                    "type": "string"
+                })
+            }
+        }
+
+        impl FromStr for $Name {
+            type Err = core::convert::Infallible;
+
+            fn from_str(s: &str) -> Result<Self, Self::Err> {
+                Ok(match s {
+                    $( $string => Self::$Variant, )*
+                    _ => Self::$OtherVariant(s.to_owned().into()),
+                })
+            }
+        }
+
+        impl $Name {
+            pub fn desc(&self) -> &str {
+                match self {
+                    $( Self::$Variant => $string, )*
+                    Self::$OtherVariant(name) => name.as_ref(),
+                }
+            }
+        }
+
+        crate::target_spec_enum!(@common_impls $Name);
+    };
+
+    (@common_impls $Name:ident) => {
+        impl crate::json::ToJson for $Name {
+            fn to_json(&self) -> crate::json::Json {
+                self.desc().to_json()
+            }
+        }
+
+        crate::json::serde_deserialize_from_str!($Name);
+
+
+        impl std::fmt::Display for $Name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(self.desc())
+            }
+        }
+    };
+}
+use target_spec_enum;

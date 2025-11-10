@@ -1,25 +1,38 @@
-// run-rustfix
-// aux-build:macro_rules.rs
+//@aux-build:proc_macros.rs
 
 #![warn(clippy::default_numeric_fallback)]
-#![allow(unused)]
-#![allow(clippy::never_loop)]
-#![allow(clippy::no_effect)]
-#![allow(clippy::unnecessary_operation)]
-#![allow(clippy::branches_sharing_code)]
-#![allow(clippy::match_single_binding)]
+#![allow(
+    unused,
+    clippy::never_loop,
+    clippy::no_effect,
+    clippy::unnecessary_operation,
+    clippy::branches_sharing_code,
+    clippy::match_single_binding,
+    clippy::let_unit_value,
+    clippy::let_with_type_underscore
+)]
 
-#[macro_use]
-extern crate macro_rules;
+extern crate proc_macros;
+use proc_macros::{external, inline_macros};
 
 mod basic_expr {
     fn test() {
         // Should lint unsuffixed literals typed `f64`.
         let x = 0.12;
+        //~^ default_numeric_fallback
         let x = [1., 2., 3.];
+        //~^ default_numeric_fallback
+        //~| default_numeric_fallback
+        //~| default_numeric_fallback
         let x = if true { (1., 2.) } else { (3., 4.) };
+        //~^ default_numeric_fallback
+        //~| default_numeric_fallback
+        //~| default_numeric_fallback
+        //~| default_numeric_fallback
         let x = match 1. {
+            //~^ default_numeric_fallback
             _ => 1.,
+            //~^ default_numeric_fallback
         };
 
         // Should NOT lint suffixed literals.
@@ -30,6 +43,7 @@ mod basic_expr {
         let x: [f64; 3] = [1., 2., 3.];
         let x: (f64, f64) = if true { (1., 2.) } else { (3., 4.) };
         let x: _ = 1.;
+        const X: f32 = 1.;
     }
 }
 
@@ -38,6 +52,7 @@ mod nested_local {
         let x: _ = {
             // Should lint this because this literal is not bound to any types.
             let y = 1.;
+            //~^ default_numeric_fallback
 
             // Should NOT lint this because this literal is bound to `_` of outer `Local`.
             1.
@@ -46,23 +61,32 @@ mod nested_local {
         let x: _ = if true {
             // Should lint this because this literal is not bound to any types.
             let y = 1.;
+            //~^ default_numeric_fallback
 
             // Should NOT lint this because this literal is bound to `_` of outer `Local`.
             1.
         } else {
             // Should lint this because this literal is not bound to any types.
             let y = 1.;
+            //~^ default_numeric_fallback
 
             // Should NOT lint this because this literal is bound to `_` of outer `Local`.
             2.
+        };
+
+        const X: f32 = {
+            // Should lint this because this literal is not bound to any types.
+            let y = 1.;
+            //~^ default_numeric_fallback
+
+            // Should NOT lint this because this literal is bound to `_` of outer `Local`.
+            1.
         };
     }
 }
 
 mod function_def {
     fn ret_f64() -> f64 {
-        // Even though the output type is specified,
-        // this unsuffixed literal is linted to reduce heuristics and keep codebase simple.
         1.
     }
 
@@ -70,10 +94,12 @@ mod function_def {
         // Should lint this because return type is inferred to `f64` and NOT bound to a concrete
         // type.
         let f = || -> _ { 1. };
+        //~^ default_numeric_fallback
 
         // Even though the output type is specified,
         // this unsuffixed literal is linted to reduce heuristics and keep codebase simple.
         let f = || -> f64 { 1. };
+        //~^ default_numeric_fallback
     }
 }
 
@@ -88,9 +114,11 @@ mod function_calls {
 
         // Should lint this because the argument type is inferred to `f64` and NOT bound to a concrete type.
         generic_arg(1.);
+        //~^ default_numeric_fallback
 
         // Should lint this because the argument type is inferred to `f64` and NOT bound to a concrete type.
         let x: _ = generic_arg(1.);
+        //~^ default_numeric_fallback
     }
 }
 
@@ -109,9 +137,11 @@ mod struct_ctor {
 
         // Should lint this because the field type is inferred to `f64` and NOT bound to a concrete type.
         GenericStruct { x: 1. };
+        //~^ default_numeric_fallback
 
         // Should lint this because the field type is inferred to `f64` and NOT bound to a concrete type.
         let _ = GenericStruct { x: 1. };
+        //~^ default_numeric_fallback
     }
 }
 
@@ -130,11 +160,12 @@ mod enum_ctor {
 
         // Should lint this because the field type is inferred to `f64` and NOT bound to a concrete type.
         GenericEnum::X(1.);
+        //~^ default_numeric_fallback
     }
 }
 
 mod method_calls {
-    struct StructForMethodCallTest {}
+    struct StructForMethodCallTest;
 
     impl StructForMethodCallTest {
         fn concrete_arg(&self, f: f64) {}
@@ -150,24 +181,23 @@ mod method_calls {
 
         // Should lint this because the argument type is bound to a concrete type.
         s.generic_arg(1.);
+        //~^ default_numeric_fallback
     }
 }
 
 mod in_macro {
-    macro_rules! internal_macro {
-        () => {
-            let x = 22.;
-        };
-    }
+    use super::*;
 
     // Should lint in internal macro.
+    #[inline_macros]
     fn internal() {
-        internal_macro!();
+        inline!(let x = 22.;);
+        //~^ default_numeric_fallback
     }
 
     // Should NOT lint in external macro.
     fn external() {
-        default_numeric_fallback!();
+        external!(let x = 22.;);
     }
 }
 

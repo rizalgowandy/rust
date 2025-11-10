@@ -1,10 +1,10 @@
+use crate::async_iter::AsyncIterator;
 use crate::cell::UnsafeCell;
 use crate::fmt;
 use crate::future::Future;
 use crate::ops::{Deref, DerefMut};
 use crate::pin::Pin;
 use crate::ptr::{NonNull, Unique};
-use crate::stream::Stream;
 use crate::task::{Context, Poll};
 
 /// A marker trait which represents "panic safe" types in Rust.
@@ -28,7 +28,7 @@ use crate::task::{Context, Poll};
 /// 2. This broken invariant is then later observed.
 ///
 /// Typically in Rust, it is difficult to perform step (2) because catching a
-/// panic involves either spawning a thread (which in turns makes it difficult
+/// panic involves either spawning a thread (which in turn makes it difficult
 /// to later witness broken invariants) or using the `catch_unwind` function in this
 /// module. Additionally, even if an invariant is witnessed, it typically isn't a
 /// problem in Rust because there are no uninitialized values (like in C or C++).
@@ -82,8 +82,8 @@ use crate::task::{Context, Poll};
 /// [`AssertUnwindSafe`] wrapper struct can be used to force this trait to be
 /// implemented for any closed over variables passed to `catch_unwind`.
 #[stable(feature = "catch_unwind", since = "1.9.0")]
-#[cfg_attr(not(test), rustc_diagnostic_item = "unwind_safe_trait")]
-#[rustc_on_unimplemented(
+#[rustc_diagnostic_item = "unwind_safe_trait"]
+#[diagnostic::on_unimplemented(
     message = "the type `{Self}` may not be safely transferred across an unwind boundary",
     label = "`{Self}` may not be safely transferred across an unwind boundary"
 )]
@@ -98,12 +98,12 @@ pub auto trait UnwindSafe {}
 /// This is a "helper marker trait" used to provide impl blocks for the
 /// [`UnwindSafe`] trait, for more information see that documentation.
 #[stable(feature = "catch_unwind", since = "1.9.0")]
-#[cfg_attr(not(test), rustc_diagnostic_item = "ref_unwind_safe_trait")]
-#[rustc_on_unimplemented(
+#[rustc_diagnostic_item = "ref_unwind_safe_trait"]
+#[diagnostic::on_unimplemented(
     message = "the type `{Self}` may contain interior mutability and a reference may not be safely \
-               transferrable across a catch_unwind boundary",
+               transferable across a catch_unwind boundary",
     label = "`{Self}` may contain interior mutability and a reference may not be safely \
-             transferrable across a catch_unwind boundary"
+             transferable across a catch_unwind boundary"
 )]
 pub auto trait RefUnwindSafe {}
 
@@ -217,7 +217,7 @@ impl RefUnwindSafe for crate::sync::atomic::AtomicI32 {}
 #[stable(feature = "integer_atomics_stable", since = "1.34.0")]
 impl RefUnwindSafe for crate::sync::atomic::AtomicI64 {}
 #[cfg(target_has_atomic_load_store = "128")]
-#[unstable(feature = "integer_atomics", issue = "32976")]
+#[unstable(feature = "integer_atomics", issue = "99069")]
 impl RefUnwindSafe for crate::sync::atomic::AtomicI128 {}
 
 #[cfg(target_has_atomic_load_store = "ptr")]
@@ -236,7 +236,7 @@ impl RefUnwindSafe for crate::sync::atomic::AtomicU32 {}
 #[stable(feature = "integer_atomics_stable", since = "1.34.0")]
 impl RefUnwindSafe for crate::sync::atomic::AtomicU64 {}
 #[cfg(target_has_atomic_load_store = "128")]
-#[unstable(feature = "integer_atomics", issue = "32976")]
+#[unstable(feature = "integer_atomics", issue = "99069")]
 impl RefUnwindSafe for crate::sync::atomic::AtomicU128 {}
 
 #[cfg(target_has_atomic_load_store = "8")]
@@ -248,7 +248,8 @@ impl RefUnwindSafe for crate::sync::atomic::AtomicBool {}
 impl<T> RefUnwindSafe for crate::sync::atomic::AtomicPtr<T> {}
 
 #[stable(feature = "catch_unwind", since = "1.9.0")]
-impl<T> Deref for AssertUnwindSafe<T> {
+#[rustc_const_unstable(feature = "const_convert", issue = "143773")]
+impl<T> const Deref for AssertUnwindSafe<T> {
     type Target = T;
 
     fn deref(&self) -> &T {
@@ -257,7 +258,8 @@ impl<T> Deref for AssertUnwindSafe<T> {
 }
 
 #[stable(feature = "catch_unwind", since = "1.9.0")]
-impl<T> DerefMut for AssertUnwindSafe<T> {
+#[rustc_const_unstable(feature = "const_convert", issue = "143773")]
+impl<T> const DerefMut for AssertUnwindSafe<T> {
     fn deref_mut(&mut self) -> &mut T {
         &mut self.0
     }
@@ -267,6 +269,7 @@ impl<T> DerefMut for AssertUnwindSafe<T> {
 impl<R, F: FnOnce() -> R> FnOnce<()> for AssertUnwindSafe<F> {
     type Output = R;
 
+    #[inline]
     extern "rust-call" fn call_once(self, _args: ()) -> R {
         (self.0)()
     }
@@ -276,6 +279,13 @@ impl<R, F: FnOnce() -> R> FnOnce<()> for AssertUnwindSafe<F> {
 impl<T: fmt::Debug> fmt::Debug for AssertUnwindSafe<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("AssertUnwindSafe").field(&self.0).finish()
+    }
+}
+
+#[stable(feature = "assertunwindsafe_default", since = "1.62.0")]
+impl<T: Default> Default for AssertUnwindSafe<T> {
+    fn default() -> Self {
+        Self(Default::default())
     }
 }
 
@@ -290,8 +300,8 @@ impl<F: Future> Future for AssertUnwindSafe<F> {
     }
 }
 
-#[unstable(feature = "async_stream", issue = "79024")]
-impl<S: Stream> Stream for AssertUnwindSafe<S> {
+#[unstable(feature = "async_iterator", issue = "79024")]
+impl<S: AsyncIterator> AsyncIterator for AssertUnwindSafe<S> {
     type Item = S::Item;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<S::Item>> {

@@ -1,10 +1,10 @@
 //! Definitions of `Saturating<T>`.
 
 use crate::fmt;
-use crate::ops::{Add, AddAssign, BitAnd, BitAndAssign, BitOr, BitOrAssign};
-use crate::ops::{BitXor, BitXorAssign, Div, DivAssign};
-use crate::ops::{Mul, MulAssign, Neg, Not, Rem, RemAssign};
-use crate::ops::{Shl, ShlAssign, Shr, ShrAssign, Sub, SubAssign};
+use crate::ops::{
+    Add, AddAssign, BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Div, DivAssign,
+    Mul, MulAssign, Neg, Not, Rem, RemAssign, Sub, SubAssign,
+};
 
 /// Provides intentionally-saturating arithmetic on `T`.
 ///
@@ -24,7 +24,6 @@ use crate::ops::{Shl, ShlAssign, Shr, ShrAssign, Sub, SubAssign};
 /// # Examples
 ///
 /// ```
-/// #![feature(saturating_int_impl)]
 /// use std::num::Saturating;
 ///
 /// let max = Saturating(u32::MAX);
@@ -32,181 +31,190 @@ use crate::ops::{Shl, ShlAssign, Shr, ShrAssign, Sub, SubAssign};
 ///
 /// assert_eq!(u32::MAX, (max + one).0);
 /// ```
-#[unstable(feature = "saturating_int_impl", issue = "87920")]
+#[stable(feature = "saturating_int_impl", since = "1.74.0")]
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Default, Hash)]
 #[repr(transparent)]
-pub struct Saturating<T>(#[unstable(feature = "saturating_int_impl", issue = "87920")] pub T);
+#[rustc_diagnostic_item = "Saturating"]
+pub struct Saturating<T>(#[stable(feature = "saturating_int_impl", since = "1.74.0")] pub T);
 
-#[unstable(feature = "saturating_int_impl", issue = "87920")]
+#[stable(feature = "saturating_int_impl", since = "1.74.0")]
 impl<T: fmt::Debug> fmt::Debug for Saturating<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
     }
 }
 
-#[unstable(feature = "saturating_int_impl", issue = "87920")]
+#[stable(feature = "saturating_int_impl", since = "1.74.0")]
 impl<T: fmt::Display> fmt::Display for Saturating<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
     }
 }
 
-#[unstable(feature = "saturating_int_impl", issue = "87920")]
+#[stable(feature = "saturating_int_impl", since = "1.74.0")]
 impl<T: fmt::Binary> fmt::Binary for Saturating<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
     }
 }
 
-#[unstable(feature = "saturating_int_impl", issue = "87920")]
+#[stable(feature = "saturating_int_impl", since = "1.74.0")]
 impl<T: fmt::Octal> fmt::Octal for Saturating<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
     }
 }
 
-#[unstable(feature = "saturating_int_impl", issue = "87920")]
+#[stable(feature = "saturating_int_impl", since = "1.74.0")]
 impl<T: fmt::LowerHex> fmt::LowerHex for Saturating<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
     }
 }
 
-#[unstable(feature = "saturating_int_impl", issue = "87920")]
+#[stable(feature = "saturating_int_impl", since = "1.74.0")]
 impl<T: fmt::UpperHex> fmt::UpperHex for Saturating<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
     }
 }
-#[allow(unused_macros)]
-macro_rules! sh_impl_signed {
-    ($t:ident, $f:ident) => {
-        // FIXME what is the correct implementation here? see discussion https://github.com/rust-lang/rust/pull/87921#discussion_r695870065
-        //
-        // #[unstable(feature = "saturating_int_impl", issue = "87920")]
-        // impl Shl<$f> for Saturating<$t> {
-        //     type Output = Saturating<$t>;
-        //
-        //     #[inline]
-        //     fn shl(self, other: $f) -> Saturating<$t> {
-        //         if other < 0 {
-        //             Saturating(self.0.shr((-other & self::shift_max::$t as $f) as u32))
-        //         } else {
-        //             Saturating(self.0.shl((other & self::shift_max::$t as $f) as u32))
-        //         }
-        //     }
-        // }
-        // forward_ref_binop! { impl Shl, shl for Saturating<$t>, $f,
-        // #[unstable(feature = "saturating_int_impl", issue = "87920")] }
-        //
-        // #[unstable(feature = "saturating_int_impl", issue = "87920")]
-        // impl ShlAssign<$f> for Saturating<$t> {
-        //     #[inline]
-        //     fn shl_assign(&mut self, other: $f) {
-        //         *self = *self << other;
-        //     }
-        // }
-        // forward_ref_op_assign! { impl ShlAssign, shl_assign for Saturating<$t>, $f }
 
-        #[unstable(feature = "saturating_int_impl", issue = "87920")]
-        impl Shr<$f> for Saturating<$t> {
-            type Output = Saturating<$t>;
-
-            #[inline]
-            fn shr(self, other: $f) -> Saturating<$t> {
-                if other < 0 {
-                    Saturating(self.0.shl((-other & self::shift_max::$t as $f) as u32))
-                } else {
-                    Saturating(self.0.shr((other & self::shift_max::$t as $f) as u32))
-                }
-            }
-        }
-        forward_ref_binop! { impl Shr, shr for Saturating<$t>, $f,
-        #[unstable(feature = "saturating_int_impl", issue = "87920")] }
-
-        #[unstable(feature = "saturating_int_impl", issue = "87920")]
-        impl ShrAssign<$f> for Saturating<$t> {
-            #[inline]
-            fn shr_assign(&mut self, other: $f) {
-                *self = *self >> other;
-            }
-        }
-        forward_ref_op_assign! { impl ShrAssign, shr_assign for Saturating<$t>, $f }
-    };
-}
-
-macro_rules! sh_impl_unsigned {
-    ($t:ident, $f:ident) => {
-        #[unstable(feature = "saturating_int_impl", issue = "87920")]
-        impl Shl<$f> for Saturating<$t> {
-            type Output = Saturating<$t>;
-
-            #[inline]
-            fn shl(self, other: $f) -> Saturating<$t> {
-                Saturating(self.0.wrapping_shl(other as u32))
-            }
-        }
-        forward_ref_binop! { impl Shl, shl for Saturating<$t>, $f,
-        #[unstable(feature = "saturating_int_impl", issue = "87920")] }
-
-        #[unstable(feature = "saturating_int_impl", issue = "87920")]
-        impl ShlAssign<$f> for Saturating<$t> {
-            #[inline]
-            fn shl_assign(&mut self, other: $f) {
-                *self = *self << other;
-            }
-        }
-        forward_ref_op_assign! { impl ShlAssign, shl_assign for Saturating<$t>, $f }
-
-        #[unstable(feature = "saturating_int_impl", issue = "87920")]
-        impl Shr<$f> for Saturating<$t> {
-            type Output = Saturating<$t>;
-
-            #[inline]
-            fn shr(self, other: $f) -> Saturating<$t> {
-                Saturating(self.0.wrapping_shr(other as u32))
-            }
-        }
-        forward_ref_binop! { impl Shr, shr for Saturating<$t>, $f,
-        #[unstable(feature = "saturating_int_impl", issue = "87920")] }
-
-        #[unstable(feature = "saturating_int_impl", issue = "87920")]
-        impl ShrAssign<$f> for Saturating<$t> {
-            #[inline]
-            fn shr_assign(&mut self, other: $f) {
-                *self = *self >> other;
-            }
-        }
-        forward_ref_op_assign! { impl ShrAssign, shr_assign for Saturating<$t>, $f }
-    };
-}
-
-// FIXME (#23545): uncomment the remaining impls
-macro_rules! sh_impl_all {
-    ($($t:ident)*) => ($(
-        //sh_impl_unsigned! { $t, u8 }
-        //sh_impl_unsigned! { $t, u16 }
-        //sh_impl_unsigned! { $t, u32 }
-        //sh_impl_unsigned! { $t, u64 }
-        //sh_impl_unsigned! { $t, u128 }
-        sh_impl_unsigned! { $t, usize }
-
-        //sh_impl_signed! { $t, i8 }
-        //sh_impl_signed! { $t, i16 }
-        //sh_impl_signed! { $t, i32 }
-        //sh_impl_signed! { $t, i64 }
-        //sh_impl_signed! { $t, i128 }
-        //sh_impl_signed! { $t, isize }
-    )*)
-}
-
-sh_impl_all! { u8 u16 u32 u64 u128 usize i8 i16 i32 i64 i128 isize }
+// FIXME the correct implementation is not clear. Waiting for a real world use case at https://github.com/rust-lang/libs-team/issues/230
+//
+// #[allow(unused_macros)]
+// macro_rules! sh_impl_signed {
+//     ($t:ident, $f:ident) => {
+//         // FIXME what is the correct implementation here? see discussion https://github.com/rust-lang/rust/pull/87921#discussion_r695870065
+//         //
+//         // #[unstable(feature = "saturating_int_impl", issue = "87920")]
+//         // impl Shl<$f> for Saturating<$t> {
+//         //     type Output = Saturating<$t>;
+//         //
+//         //     #[inline]
+//         //     fn shl(self, other: $f) -> Saturating<$t> {
+//         //         if other < 0 {
+//         //             Saturating(self.0.shr((-other & self::shift_max::$t as $f) as u32))
+//         //         } else {
+//         //             Saturating(self.0.shl((other & self::shift_max::$t as $f) as u32))
+//         //         }
+//         //     }
+//         // }
+//         // forward_ref_binop! { impl Shl, shl for Saturating<$t>, $f,
+//         // #[unstable(feature = "saturating_int_impl", issue = "87920")] }
+//         //
+//         // #[unstable(feature = "saturating_int_impl", issue = "87920")]
+//         // impl ShlAssign<$f> for Saturating<$t> {
+//         //     #[inline]
+//         //     fn shl_assign(&mut self, other: $f) {
+//         //         *self = *self << other;
+//         //     }
+//         // }
+//         // forward_ref_op_assign! { impl ShlAssign, shl_assign for Saturating<$t>, $f,
+//         // #[unstable(feature = "saturating_int_impl", issue = "87920")] }
+//
+//         #[unstable(feature = "saturating_int_impl", issue = "87920")]
+//         impl Shr<$f> for Saturating<$t> {
+//             type Output = Saturating<$t>;
+//
+//             #[inline]
+//             fn shr(self, other: $f) -> Saturating<$t> {
+//                 if other < 0 {
+//                     Saturating(self.0.shl((-other & self::shift_max::$t as $f) as u32))
+//                 } else {
+//                     Saturating(self.0.shr((other & self::shift_max::$t as $f) as u32))
+//                 }
+//             }
+//         }
+//         forward_ref_binop! { impl Shr, shr for Saturating<$t>, $f,
+//         #[unstable(feature = "saturating_int_impl", issue = "87920")] }
+//
+//         #[unstable(feature = "saturating_int_impl", issue = "87920")]
+//         impl ShrAssign<$f> for Saturating<$t> {
+//             #[inline]
+//             fn shr_assign(&mut self, other: $f) {
+//                 *self = *self >> other;
+//             }
+//         }
+//         forward_ref_op_assign! { impl ShrAssign, shr_assign for Saturating<$t>, $f,
+//         #[unstable(feature = "saturating_int_impl", issue = "87920")] }
+//     };
+// }
+//
+// macro_rules! sh_impl_unsigned {
+//     ($t:ident, $f:ident) => {
+//         #[unstable(feature = "saturating_int_impl", issue = "87920")]
+//         impl Shl<$f> for Saturating<$t> {
+//             type Output = Saturating<$t>;
+//
+//             #[inline]
+//             fn shl(self, other: $f) -> Saturating<$t> {
+//                 Saturating(self.0.wrapping_shl(other as u32))
+//             }
+//         }
+//         forward_ref_binop! { impl Shl, shl for Saturating<$t>, $f,
+//         #[unstable(feature = "saturating_int_impl", issue = "87920")] }
+//
+//         #[unstable(feature = "saturating_int_impl", issue = "87920")]
+//         impl ShlAssign<$f> for Saturating<$t> {
+//             #[inline]
+//             fn shl_assign(&mut self, other: $f) {
+//                 *self = *self << other;
+//             }
+//         }
+//         forward_ref_op_assign! { impl ShlAssign, shl_assign for Saturating<$t>, $f,
+//         #[unstable(feature = "saturating_int_impl", issue = "87920")] }
+//
+//         #[unstable(feature = "saturating_int_impl", issue = "87920")]
+//         impl Shr<$f> for Saturating<$t> {
+//             type Output = Saturating<$t>;
+//
+//             #[inline]
+//             fn shr(self, other: $f) -> Saturating<$t> {
+//                 Saturating(self.0.wrapping_shr(other as u32))
+//             }
+//         }
+//         forward_ref_binop! { impl Shr, shr for Saturating<$t>, $f,
+//         #[unstable(feature = "saturating_int_impl", issue = "87920")] }
+//
+//         #[unstable(feature = "saturating_int_impl", issue = "87920")]
+//         impl ShrAssign<$f> for Saturating<$t> {
+//             #[inline]
+//             fn shr_assign(&mut self, other: $f) {
+//                 *self = *self >> other;
+//             }
+//         }
+//         forward_ref_op_assign! { impl ShrAssign, shr_assign for Saturating<$t>, $f,
+//         #[unstable(feature = "saturating_int_impl", issue = "87920")] }
+//     };
+// }
+//
+// // FIXME (#23545): uncomment the remaining impls
+// macro_rules! sh_impl_all {
+//     ($($t:ident)*) => ($(
+//         //sh_impl_unsigned! { $t, u8 }
+//         //sh_impl_unsigned! { $t, u16 }
+//         //sh_impl_unsigned! { $t, u32 }
+//         //sh_impl_unsigned! { $t, u64 }
+//         //sh_impl_unsigned! { $t, u128 }
+//         sh_impl_unsigned! { $t, usize }
+//
+//         //sh_impl_signed! { $t, i8 }
+//         //sh_impl_signed! { $t, i16 }
+//         //sh_impl_signed! { $t, i32 }
+//         //sh_impl_signed! { $t, i64 }
+//         //sh_impl_signed! { $t, i128 }
+//         //sh_impl_signed! { $t, isize }
+//     )*)
+// }
+//
+// sh_impl_all! { u8 u16 u32 u64 u128 usize i8 i16 i32 i64 i128 isize }
 
 // FIXME(30524): impl Op<T> for Saturating<T>, impl OpAssign<T> for Saturating<T>
 macro_rules! saturating_impl {
     ($($t:ty)*) => ($(
-        #[unstable(feature = "saturating_int_impl", issue = "87920")]
-        impl Add for Saturating<$t> {
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
+        impl const Add for Saturating<$t> {
             type Output = Saturating<$t>;
 
             #[inline]
@@ -215,19 +223,36 @@ macro_rules! saturating_impl {
             }
         }
         forward_ref_binop! { impl Add, add for Saturating<$t>, Saturating<$t>,
-                #[unstable(feature = "saturating_int_impl", issue = "87920")] }
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")] }
 
-        #[unstable(feature = "saturating_int_impl", issue = "87920")]
-        impl AddAssign for Saturating<$t> {
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
+        impl const AddAssign for Saturating<$t> {
             #[inline]
             fn add_assign(&mut self, other: Saturating<$t>) {
                 *self = *self + other;
             }
         }
-        forward_ref_op_assign! { impl AddAssign, add_assign for Saturating<$t>, Saturating<$t> }
+        forward_ref_op_assign! { impl AddAssign, add_assign for Saturating<$t>, Saturating<$t>,
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")] }
 
-        #[unstable(feature = "saturating_int_impl", issue = "87920")]
-        impl Sub for Saturating<$t> {
+        #[stable(feature = "saturating_int_assign_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
+        impl const AddAssign<$t> for Saturating<$t> {
+            #[inline]
+            fn add_assign(&mut self, other: $t) {
+                *self = *self + Saturating(other);
+            }
+        }
+        forward_ref_op_assign! { impl AddAssign, add_assign for Saturating<$t>, $t,
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")] }
+
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
+        impl const Sub for Saturating<$t> {
             type Output = Saturating<$t>;
 
             #[inline]
@@ -236,19 +261,36 @@ macro_rules! saturating_impl {
             }
         }
         forward_ref_binop! { impl Sub, sub for Saturating<$t>, Saturating<$t>,
-                #[unstable(feature = "saturating_int_impl", issue = "87920")] }
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")] }
 
-        #[unstable(feature = "saturating_int_impl", issue = "87920")]
-        impl SubAssign for Saturating<$t> {
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
+        impl const SubAssign for Saturating<$t> {
             #[inline]
             fn sub_assign(&mut self, other: Saturating<$t>) {
                 *self = *self - other;
             }
         }
-        forward_ref_op_assign! { impl SubAssign, sub_assign for Saturating<$t>, Saturating<$t> }
+        forward_ref_op_assign! { impl SubAssign, sub_assign for Saturating<$t>, Saturating<$t>,
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")] }
 
-        #[unstable(feature = "saturating_int_impl", issue = "87920")]
-        impl Mul for Saturating<$t> {
+        #[stable(feature = "saturating_int_assign_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
+        impl const SubAssign<$t> for Saturating<$t> {
+            #[inline]
+            fn sub_assign(&mut self, other: $t) {
+                *self = *self - Saturating(other);
+            }
+        }
+        forward_ref_op_assign! { impl SubAssign, sub_assign for Saturating<$t>, $t,
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")] }
+
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
+        impl const Mul for Saturating<$t> {
             type Output = Saturating<$t>;
 
             #[inline]
@@ -257,23 +299,36 @@ macro_rules! saturating_impl {
             }
         }
         forward_ref_binop! { impl Mul, mul for Saturating<$t>, Saturating<$t>,
-                #[unstable(feature = "saturating_int_impl", issue = "87920")] }
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")] }
 
-        #[unstable(feature = "saturating_int_impl", issue = "87920")]
-        impl MulAssign for Saturating<$t> {
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
+        impl const MulAssign for Saturating<$t> {
             #[inline]
             fn mul_assign(&mut self, other: Saturating<$t>) {
                 *self = *self * other;
             }
         }
-        forward_ref_op_assign! { impl MulAssign, mul_assign for Saturating<$t>, Saturating<$t> }
+        forward_ref_op_assign! { impl MulAssign, mul_assign for Saturating<$t>, Saturating<$t>,
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")] }
+
+        #[stable(feature = "saturating_int_assign_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
+        impl const MulAssign<$t> for Saturating<$t> {
+            #[inline]
+            fn mul_assign(&mut self, other: $t) {
+                *self = *self * Saturating(other);
+            }
+        }
+        forward_ref_op_assign! { impl MulAssign, mul_assign for Saturating<$t>, $t,
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")] }
 
         /// # Examples
         ///
-        /// Basic usage:
-        ///
         /// ```
-        /// #![feature(saturating_int_impl)]
         /// use std::num::Saturating;
         ///
         #[doc = concat!("assert_eq!(Saturating(2", stringify!($t), "), Saturating(5", stringify!($t), ") / Saturating(2));")]
@@ -282,13 +337,13 @@ macro_rules! saturating_impl {
         /// ```
         ///
         /// ```should_panic
-        /// #![feature(saturating_int_impl)]
         /// use std::num::Saturating;
         ///
         #[doc = concat!("let _ = Saturating(0", stringify!($t), ") / Saturating(0);")]
         /// ```
-        #[unstable(feature = "saturating_int_impl", issue = "87920")]
-        impl Div for Saturating<$t> {
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
+        impl const Div for Saturating<$t> {
             type Output = Saturating<$t>;
 
             #[inline]
@@ -297,19 +352,36 @@ macro_rules! saturating_impl {
             }
         }
         forward_ref_binop! { impl Div, div for Saturating<$t>, Saturating<$t>,
-                #[unstable(feature = "saturating_int_impl", issue = "87920")] }
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")] }
 
-        #[unstable(feature = "saturating_int_impl", issue = "87920")]
-        impl DivAssign for Saturating<$t> {
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
+        impl const DivAssign for Saturating<$t> {
             #[inline]
             fn div_assign(&mut self, other: Saturating<$t>) {
                 *self = *self / other;
             }
         }
-        forward_ref_op_assign! { impl DivAssign, div_assign for Saturating<$t>, Saturating<$t> }
+        forward_ref_op_assign! { impl DivAssign, div_assign for Saturating<$t>, Saturating<$t>,
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")] }
 
-        #[unstable(feature = "saturating_int_impl", issue = "87920")]
-        impl Rem for Saturating<$t> {
+        #[stable(feature = "saturating_int_assign_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
+        impl const DivAssign<$t> for Saturating<$t> {
+            #[inline]
+            fn div_assign(&mut self, other: $t) {
+                *self = *self / Saturating(other);
+            }
+        }
+        forward_ref_op_assign! { impl DivAssign, div_assign for Saturating<$t>, $t,
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")] }
+
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
+        impl const Rem for Saturating<$t> {
             type Output = Saturating<$t>;
 
             #[inline]
@@ -318,19 +390,36 @@ macro_rules! saturating_impl {
             }
         }
         forward_ref_binop! { impl Rem, rem for Saturating<$t>, Saturating<$t>,
-                #[unstable(feature = "saturating_int_impl", issue = "87920")] }
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")] }
 
-        #[unstable(feature = "saturating_int_impl", issue = "87920")]
-        impl RemAssign for Saturating<$t> {
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
+        impl const RemAssign for Saturating<$t> {
             #[inline]
             fn rem_assign(&mut self, other: Saturating<$t>) {
                 *self = *self % other;
             }
         }
-        forward_ref_op_assign! { impl RemAssign, rem_assign for Saturating<$t>, Saturating<$t> }
+        forward_ref_op_assign! { impl RemAssign, rem_assign for Saturating<$t>, Saturating<$t>,
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")] }
 
-        #[unstable(feature = "saturating_int_impl", issue = "87920")]
-        impl Not for Saturating<$t> {
+        #[stable(feature = "saturating_int_assign_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
+        impl const RemAssign<$t> for Saturating<$t> {
+            #[inline]
+            fn rem_assign(&mut self, other: $t) {
+                *self = *self % Saturating(other);
+            }
+        }
+        forward_ref_op_assign! { impl RemAssign, rem_assign for Saturating<$t>, $t,
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")] }
+
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
+        impl const Not for Saturating<$t> {
             type Output = Saturating<$t>;
 
             #[inline]
@@ -339,10 +428,12 @@ macro_rules! saturating_impl {
             }
         }
         forward_ref_unop! { impl Not, not for Saturating<$t>,
-                #[unstable(feature = "saturating_int_impl", issue = "87920")] }
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")] }
 
-        #[unstable(feature = "saturating_int_impl", issue = "87920")]
-        impl BitXor for Saturating<$t> {
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
+        impl const BitXor for Saturating<$t> {
             type Output = Saturating<$t>;
 
             #[inline]
@@ -351,19 +442,36 @@ macro_rules! saturating_impl {
             }
         }
         forward_ref_binop! { impl BitXor, bitxor for Saturating<$t>, Saturating<$t>,
-                #[unstable(feature = "saturating_int_impl", issue = "87920")] }
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")] }
 
-        #[unstable(feature = "saturating_int_impl", issue = "87920")]
-        impl BitXorAssign for Saturating<$t> {
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
+        impl const BitXorAssign for Saturating<$t> {
             #[inline]
             fn bitxor_assign(&mut self, other: Saturating<$t>) {
                 *self = *self ^ other;
             }
         }
-        forward_ref_op_assign! { impl BitXorAssign, bitxor_assign for Saturating<$t>, Saturating<$t> }
+        forward_ref_op_assign! { impl BitXorAssign, bitxor_assign for Saturating<$t>, Saturating<$t>,
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")] }
 
-        #[unstable(feature = "saturating_int_impl", issue = "87920")]
-        impl BitOr for Saturating<$t> {
+        #[stable(feature = "saturating_int_assign_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
+        impl const BitXorAssign<$t> for Saturating<$t> {
+            #[inline]
+            fn bitxor_assign(&mut self, other: $t) {
+                *self = *self ^ Saturating(other);
+            }
+        }
+        forward_ref_op_assign! { impl BitXorAssign, bitxor_assign for Saturating<$t>, $t,
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")] }
+
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
+        impl const BitOr for Saturating<$t> {
             type Output = Saturating<$t>;
 
             #[inline]
@@ -372,19 +480,36 @@ macro_rules! saturating_impl {
             }
         }
         forward_ref_binop! { impl BitOr, bitor for Saturating<$t>, Saturating<$t>,
-                #[unstable(feature = "saturating_int_impl", issue = "87920")] }
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")] }
 
-        #[unstable(feature = "saturating_int_impl", issue = "87920")]
-        impl BitOrAssign for Saturating<$t> {
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
+        impl const BitOrAssign for Saturating<$t> {
             #[inline]
             fn bitor_assign(&mut self, other: Saturating<$t>) {
                 *self = *self | other;
             }
         }
-        forward_ref_op_assign! { impl BitOrAssign, bitor_assign for Saturating<$t>, Saturating<$t> }
+        forward_ref_op_assign! { impl BitOrAssign, bitor_assign for Saturating<$t>, Saturating<$t>,
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")] }
 
-        #[unstable(feature = "saturating_int_impl", issue = "87920")]
-        impl BitAnd for Saturating<$t> {
+        #[stable(feature = "saturating_int_assign_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
+        impl const BitOrAssign<$t> for Saturating<$t> {
+            #[inline]
+            fn bitor_assign(&mut self, other: $t) {
+                *self = *self | Saturating(other);
+            }
+        }
+        forward_ref_op_assign! { impl BitOrAssign, bitor_assign for Saturating<$t>, $t,
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")] }
+
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
+        impl const BitAnd for Saturating<$t> {
             type Output = Saturating<$t>;
 
             #[inline]
@@ -393,16 +518,32 @@ macro_rules! saturating_impl {
             }
         }
         forward_ref_binop! { impl BitAnd, bitand for Saturating<$t>, Saturating<$t>,
-                #[unstable(feature = "saturating_int_impl", issue = "87920")] }
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")] }
 
-        #[unstable(feature = "saturating_int_impl", issue = "87920")]
-        impl BitAndAssign for Saturating<$t> {
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
+        impl const BitAndAssign for Saturating<$t> {
             #[inline]
             fn bitand_assign(&mut self, other: Saturating<$t>) {
                 *self = *self & other;
             }
         }
-        forward_ref_op_assign! { impl BitAndAssign, bitand_assign for Saturating<$t>, Saturating<$t> }
+        forward_ref_op_assign! { impl BitAndAssign, bitand_assign for Saturating<$t>, Saturating<$t>,
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")] }
+
+        #[stable(feature = "saturating_int_assign_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
+        impl const BitAndAssign<$t> for Saturating<$t> {
+            #[inline]
+            fn bitand_assign(&mut self, other: $t) {
+                *self = *self & Saturating(other);
+            }
+        }
+        forward_ref_op_assign! { impl BitAndAssign, bitand_assign for Saturating<$t>, $t,
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")] }
 
     )*)
 }
@@ -416,55 +557,43 @@ macro_rules! saturating_int_impl {
             ///
             /// # Examples
             ///
-            /// Basic usage:
-            ///
             /// ```
-            /// #![feature(saturating_int_impl)]
             /// use std::num::Saturating;
             ///
             #[doc = concat!("assert_eq!(<Saturating<", stringify!($t), ">>::MIN, Saturating(", stringify!($t), "::MIN));")]
             /// ```
-            #[unstable(feature = "saturating_int_impl", issue = "87920")]
+            #[stable(feature = "saturating_int_impl", since = "1.74.0")]
             pub const MIN: Self = Self(<$t>::MIN);
 
             /// Returns the largest value that can be represented by this integer type.
             ///
             /// # Examples
             ///
-            /// Basic usage:
-            ///
             /// ```
-            /// #![feature(saturating_int_impl)]
             /// use std::num::Saturating;
             ///
             #[doc = concat!("assert_eq!(<Saturating<", stringify!($t), ">>::MAX, Saturating(", stringify!($t), "::MAX));")]
             /// ```
-            #[unstable(feature = "saturating_int_impl", issue = "87920")]
+            #[stable(feature = "saturating_int_impl", since = "1.74.0")]
             pub const MAX: Self = Self(<$t>::MAX);
 
             /// Returns the size of this integer type in bits.
             ///
             /// # Examples
             ///
-            /// Basic usage:
-            ///
             /// ```
-            /// #![feature(saturating_int_impl)]
             /// use std::num::Saturating;
             ///
             #[doc = concat!("assert_eq!(<Saturating<", stringify!($t), ">>::BITS, ", stringify!($t), "::BITS);")]
             /// ```
-            #[unstable(feature = "saturating_int_impl", issue = "87920")]
+            #[stable(feature = "saturating_int_impl", since = "1.74.0")]
             pub const BITS: u32 = <$t>::BITS;
 
             /// Returns the number of ones in the binary representation of `self`.
             ///
             /// # Examples
             ///
-            /// Basic usage:
-            ///
             /// ```
-            /// #![feature(saturating_int_impl)]
             /// use std::num::Saturating;
             ///
             #[doc = concat!("let n = Saturating(0b01001100", stringify!($t), ");")]
@@ -476,7 +605,8 @@ macro_rules! saturating_int_impl {
             #[doc(alias = "popcnt")]
             #[must_use = "this returns the result of the operation, \
                           without modifying the original"]
-            #[unstable(feature = "saturating_int_impl", issue = "87920")]
+            #[rustc_const_stable(feature = "saturating_int_impl", since = "1.74.0")]
+            #[stable(feature = "saturating_int_impl", since = "1.74.0")]
             pub const fn count_ones(self) -> u32 {
                 self.0.count_ones()
             }
@@ -485,10 +615,7 @@ macro_rules! saturating_int_impl {
             ///
             /// # Examples
             ///
-            /// Basic usage:
-            ///
             /// ```
-            /// #![feature(saturating_int_impl)]
             /// use std::num::Saturating;
             ///
             #[doc = concat!("assert_eq!(Saturating(!0", stringify!($t), ").count_zeros(), 0);")]
@@ -496,7 +623,8 @@ macro_rules! saturating_int_impl {
             #[inline]
             #[must_use = "this returns the result of the operation, \
                           without modifying the original"]
-            #[unstable(feature = "saturating_int_impl", issue = "87920")]
+            #[rustc_const_stable(feature = "saturating_int_impl", since = "1.74.0")]
+            #[stable(feature = "saturating_int_impl", since = "1.74.0")]
             pub const fn count_zeros(self) -> u32 {
                 self.0.count_zeros()
             }
@@ -505,10 +633,7 @@ macro_rules! saturating_int_impl {
             ///
             /// # Examples
             ///
-            /// Basic usage:
-            ///
             /// ```
-            /// #![feature(saturating_int_impl)]
             /// use std::num::Saturating;
             ///
             #[doc = concat!("let n = Saturating(0b0101000", stringify!($t), ");")]
@@ -518,7 +643,8 @@ macro_rules! saturating_int_impl {
             #[inline]
             #[must_use = "this returns the result of the operation, \
                           without modifying the original"]
-            #[unstable(feature = "saturating_int_impl", issue = "87920")]
+            #[rustc_const_stable(feature = "saturating_int_impl", since = "1.74.0")]
+            #[stable(feature = "saturating_int_impl", since = "1.74.0")]
             pub const fn trailing_zeros(self) -> u32 {
                 self.0.trailing_zeros()
             }
@@ -532,10 +658,7 @@ macro_rules! saturating_int_impl {
             ///
             /// # Examples
             ///
-            /// Basic usage:
-            ///
             /// ```
-            /// #![feature(saturating_int_impl)]
             /// use std::num::Saturating;
             ///
             /// let n: Saturating<i64> = Saturating(0x0123456789ABCDEF);
@@ -546,7 +669,8 @@ macro_rules! saturating_int_impl {
             #[inline]
             #[must_use = "this returns the result of the operation, \
                           without modifying the original"]
-            #[unstable(feature = "saturating_int_impl", issue = "87920")]
+            #[rustc_const_stable(feature = "saturating_int_impl", since = "1.74.0")]
+            #[stable(feature = "saturating_int_impl", since = "1.74.0")]
             pub const fn rotate_left(self, n: u32) -> Self {
                 Saturating(self.0.rotate_left(n))
             }
@@ -560,10 +684,7 @@ macro_rules! saturating_int_impl {
             ///
             /// # Examples
             ///
-            /// Basic usage:
-            ///
             /// ```
-            /// #![feature(saturating_int_impl)]
             /// use std::num::Saturating;
             ///
             /// let n: Saturating<i64> = Saturating(0x0123456789ABCDEF);
@@ -574,7 +695,8 @@ macro_rules! saturating_int_impl {
             #[inline]
             #[must_use = "this returns the result of the operation, \
                           without modifying the original"]
-            #[unstable(feature = "saturating_int_impl", issue = "87920")]
+            #[rustc_const_stable(feature = "saturating_int_impl", since = "1.74.0")]
+            #[stable(feature = "saturating_int_impl", since = "1.74.0")]
             pub const fn rotate_right(self, n: u32) -> Self {
                 Saturating(self.0.rotate_right(n))
             }
@@ -583,10 +705,7 @@ macro_rules! saturating_int_impl {
             ///
             /// # Examples
             ///
-            /// Basic usage:
-            ///
             /// ```
-            /// #![feature(saturating_int_impl)]
             /// use std::num::Saturating;
             ///
             /// let n: Saturating<i16> = Saturating(0b0000000_01010101);
@@ -600,7 +719,8 @@ macro_rules! saturating_int_impl {
             #[inline]
             #[must_use = "this returns the result of the operation, \
                           without modifying the original"]
-            #[unstable(feature = "saturating_int_impl", issue = "87920")]
+            #[rustc_const_stable(feature = "saturating_int_impl", since = "1.74.0")]
+            #[stable(feature = "saturating_int_impl", since = "1.74.0")]
             pub const fn swap_bytes(self) -> Self {
                 Saturating(self.0.swap_bytes())
             }
@@ -609,13 +729,10 @@ macro_rules! saturating_int_impl {
             ///
             /// # Examples
             ///
-            /// Please note that this example is shared between integer types.
-            /// Which explains why `i16` is used here.
-            ///
-            /// Basic usage:
+            /// Please note that this example is shared among integer types, which is why `i16`
+            /// is used.
             ///
             /// ```
-            /// #![feature(saturating_int_impl)]
             /// use std::num::Saturating;
             ///
             /// let n = Saturating(0b0000000_01010101i16);
@@ -627,8 +744,8 @@ macro_rules! saturating_int_impl {
             /// assert_eq!(m, Saturating(-22016));
             /// ```
             #[inline]
-            #[unstable(feature = "saturating_int_impl", issue = "87920")]
-            #[rustc_const_unstable(feature = "saturating_int_impl", issue = "87920")]
+            #[rustc_const_stable(feature = "saturating_int_impl", since = "1.74.0")]
+            #[stable(feature = "saturating_int_impl", since = "1.74.0")]
             #[must_use = "this returns the result of the operation, \
                           without modifying the original"]
             pub const fn reverse_bits(self) -> Self {
@@ -642,10 +759,7 @@ macro_rules! saturating_int_impl {
             ///
             /// # Examples
             ///
-            /// Basic usage:
-            ///
             /// ```
-            /// #![feature(saturating_int_impl)]
             /// use std::num::Saturating;
             ///
             #[doc = concat!("let n = Saturating(0x1A", stringify!($t), ");")]
@@ -658,7 +772,8 @@ macro_rules! saturating_int_impl {
             /// ```
             #[inline]
             #[must_use]
-            #[unstable(feature = "saturating_int_impl", issue = "87920")]
+            #[rustc_const_stable(feature = "saturating_int_impl", since = "1.74.0")]
+            #[stable(feature = "saturating_int_impl", since = "1.74.0")]
             pub const fn from_be(x: Self) -> Self {
                 Saturating(<$t>::from_be(x.0))
             }
@@ -670,10 +785,7 @@ macro_rules! saturating_int_impl {
             ///
             /// # Examples
             ///
-            /// Basic usage:
-            ///
             /// ```
-            /// #![feature(saturating_int_impl)]
             /// use std::num::Saturating;
             ///
             #[doc = concat!("let n = Saturating(0x1A", stringify!($t), ");")]
@@ -686,7 +798,8 @@ macro_rules! saturating_int_impl {
             /// ```
             #[inline]
             #[must_use]
-            #[unstable(feature = "saturating_int_impl", issue = "87920")]
+            #[rustc_const_stable(feature = "saturating_int_impl", since = "1.74.0")]
+            #[stable(feature = "saturating_int_impl", since = "1.74.0")]
             pub const fn from_le(x: Self) -> Self {
                 Saturating(<$t>::from_le(x.0))
             }
@@ -698,10 +811,7 @@ macro_rules! saturating_int_impl {
             ///
             /// # Examples
             ///
-            /// Basic usage:
-            ///
             /// ```
-            /// #![feature(saturating_int_impl)]
             /// use std::num::Saturating;
             ///
             #[doc = concat!("let n = Saturating(0x1A", stringify!($t), ");")]
@@ -713,7 +823,8 @@ macro_rules! saturating_int_impl {
             /// }
             /// ```
             #[inline]
-            #[unstable(feature = "saturating_int_impl", issue = "87920")]
+            #[rustc_const_stable(feature = "saturating_int_impl", since = "1.74.0")]
+            #[stable(feature = "saturating_int_impl", since = "1.74.0")]
             #[must_use = "this returns the result of the operation, \
                           without modifying the original"]
             pub const fn to_be(self) -> Self {
@@ -727,10 +838,7 @@ macro_rules! saturating_int_impl {
             ///
             /// # Examples
             ///
-            /// Basic usage:
-            ///
             /// ```
-            /// #![feature(saturating_int_impl)]
             /// use std::num::Saturating;
             ///
             #[doc = concat!("let n = Saturating(0x1A", stringify!($t), ");")]
@@ -742,7 +850,8 @@ macro_rules! saturating_int_impl {
             /// }
             /// ```
             #[inline]
-            #[unstable(feature = "saturating_int_impl", issue = "87920")]
+            #[rustc_const_stable(feature = "saturating_int_impl", since = "1.74.0")]
+            #[stable(feature = "saturating_int_impl", since = "1.74.0")]
             #[must_use = "this returns the result of the operation, \
                           without modifying the original"]
             pub const fn to_le(self) -> Self {
@@ -753,10 +862,7 @@ macro_rules! saturating_int_impl {
             ///
             /// # Examples
             ///
-            /// Basic usage:
-            ///
             /// ```
-            /// #![feature(saturating_int_impl)]
             /// use std::num::Saturating;
             ///
             #[doc = concat!("assert_eq!(Saturating(3", stringify!($t), ").pow(4), Saturating(81));")]
@@ -765,17 +871,17 @@ macro_rules! saturating_int_impl {
             /// Results that are too large are saturated:
             ///
             /// ```
-            /// #![feature(saturating_int_impl)]
             /// use std::num::Saturating;
             ///
             /// assert_eq!(Saturating(3i8).pow(5), Saturating(127));
             /// assert_eq!(Saturating(3i8).pow(6), Saturating(127));
             /// ```
             #[inline]
-            #[unstable(feature = "saturating_int_impl", issue = "87920")]
+            #[rustc_const_stable(feature = "saturating_int_impl", since = "1.74.0")]
+            #[stable(feature = "saturating_int_impl", since = "1.74.0")]
             #[must_use = "this returns the result of the operation, \
                           without modifying the original"]
-            pub fn pow(self, exp: u32) -> Self {
+            pub const fn pow(self, exp: u32) -> Self {
                 Saturating(self.0.saturating_pow(exp))
             }
         }
@@ -791,10 +897,7 @@ macro_rules! saturating_int_impl_signed {
             ///
             /// # Examples
             ///
-            /// Basic usage:
-            ///
             /// ```
-            /// #![feature(saturating_int_impl)]
             /// use std::num::Saturating;
             ///
             #[doc = concat!("let n = Saturating(", stringify!($t), "::MAX >> 2);")]
@@ -802,7 +905,8 @@ macro_rules! saturating_int_impl_signed {
             /// assert_eq!(n.leading_zeros(), 3);
             /// ```
             #[inline]
-            #[unstable(feature = "saturating_int_impl", issue = "87920")]
+            #[rustc_const_stable(feature = "saturating_int_impl", since = "1.74.0")]
+            #[stable(feature = "saturating_int_impl", since = "1.74.0")]
             #[must_use = "this returns the result of the operation, \
                           without modifying the original"]
             pub const fn leading_zeros(self) -> u32 {
@@ -814,10 +918,7 @@ macro_rules! saturating_int_impl_signed {
             ///
             /// # Examples
             ///
-            /// Basic usage:
-            ///
             /// ```
-            /// #![feature(saturating_int_impl)]
             /// use std::num::Saturating;
             ///
             #[doc = concat!("assert_eq!(Saturating(100", stringify!($t), ").abs(), Saturating(100));")]
@@ -827,10 +928,11 @@ macro_rules! saturating_int_impl_signed {
             #[doc = concat!("assert_eq!(Saturating(", stringify!($t), "::MIN).abs(), Saturating(", stringify!($t), "::MAX));")]
             /// ```
             #[inline]
-            #[unstable(feature = "saturating_int_impl", issue = "87920")]
+            #[rustc_const_stable(feature = "saturating_int_impl", since = "1.74.0")]
+            #[stable(feature = "saturating_int_impl", since = "1.74.0")]
             #[must_use = "this returns the result of the operation, \
                           without modifying the original"]
-            pub fn abs(self) -> Saturating<$t> {
+            pub const fn abs(self) -> Saturating<$t> {
                 Saturating(self.0.saturating_abs())
             }
 
@@ -842,10 +944,7 @@ macro_rules! saturating_int_impl_signed {
             ///
             /// # Examples
             ///
-            /// Basic usage:
-            ///
             /// ```
-            /// #![feature(saturating_int_impl)]
             /// use std::num::Saturating;
             ///
             #[doc = concat!("assert_eq!(Saturating(10", stringify!($t), ").signum(), Saturating(1));")]
@@ -853,10 +952,11 @@ macro_rules! saturating_int_impl_signed {
             #[doc = concat!("assert_eq!(Saturating(-10", stringify!($t), ").signum(), Saturating(-1));")]
             /// ```
             #[inline]
-            #[unstable(feature = "saturating_int_impl", issue = "87920")]
+            #[rustc_const_stable(feature = "saturating_int_impl", since = "1.74.0")]
+            #[stable(feature = "saturating_int_impl", since = "1.74.0")]
             #[must_use = "this returns the result of the operation, \
                           without modifying the original"]
-            pub fn signum(self) -> Saturating<$t> {
+            pub const fn signum(self) -> Saturating<$t> {
                 Saturating(self.0.signum())
             }
 
@@ -865,10 +965,7 @@ macro_rules! saturating_int_impl_signed {
             ///
             /// # Examples
             ///
-            /// Basic usage:
-            ///
             /// ```
-            /// #![feature(saturating_int_impl)]
             /// use std::num::Saturating;
             ///
             #[doc = concat!("assert!(Saturating(10", stringify!($t), ").is_positive());")]
@@ -876,7 +973,8 @@ macro_rules! saturating_int_impl_signed {
             /// ```
             #[must_use]
             #[inline]
-            #[unstable(feature = "saturating_int_impl", issue = "87920")]
+            #[rustc_const_stable(feature = "saturating_int_impl", since = "1.74.0")]
+            #[stable(feature = "saturating_int_impl", since = "1.74.0")]
             pub const fn is_positive(self) -> bool {
                 self.0.is_positive()
             }
@@ -886,10 +984,7 @@ macro_rules! saturating_int_impl_signed {
             ///
             /// # Examples
             ///
-            /// Basic usage:
-            ///
             /// ```
-            /// #![feature(saturating_int_impl)]
             /// use std::num::Saturating;
             ///
             #[doc = concat!("assert!(Saturating(-10", stringify!($t), ").is_negative());")]
@@ -897,14 +992,16 @@ macro_rules! saturating_int_impl_signed {
             /// ```
             #[must_use]
             #[inline]
-            #[unstable(feature = "saturating_int_impl", issue = "87920")]
+            #[rustc_const_stable(feature = "saturating_int_impl", since = "1.74.0")]
+            #[stable(feature = "saturating_int_impl", since = "1.74.0")]
             pub const fn is_negative(self) -> bool {
                 self.0.is_negative()
             }
         }
 
-        #[unstable(feature = "saturating_int_impl", issue = "87920")]
-        impl Neg for Saturating<$t> {
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
+        impl const Neg for Saturating<$t> {
             type Output = Self;
             #[inline]
             fn neg(self) -> Self {
@@ -912,7 +1009,8 @@ macro_rules! saturating_int_impl_signed {
             }
         }
         forward_ref_unop! { impl Neg, neg for Saturating<$t>,
-                #[unstable(feature = "saturating_int_impl", issue = "87920")] }
+        #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+        #[rustc_const_unstable(feature = "const_ops", issue = "143802")] }
     )*)
 }
 
@@ -925,10 +1023,7 @@ macro_rules! saturating_int_impl_unsigned {
             ///
             /// # Examples
             ///
-            /// Basic usage:
-            ///
             /// ```
-            /// #![feature(saturating_int_impl)]
             /// use std::num::Saturating;
             ///
             #[doc = concat!("let n = Saturating(", stringify!($t), "::MAX >> 2);")]
@@ -936,7 +1031,8 @@ macro_rules! saturating_int_impl_unsigned {
             /// assert_eq!(n.leading_zeros(), 2);
             /// ```
             #[inline]
-            #[unstable(feature = "saturating_int_impl", issue = "87920")]
+            #[rustc_const_stable(feature = "saturating_int_impl", since = "1.74.0")]
+            #[stable(feature = "saturating_int_impl", since = "1.74.0")]
             #[must_use = "this returns the result of the operation, \
                           without modifying the original"]
             pub const fn leading_zeros(self) -> u32 {
@@ -947,10 +1043,7 @@ macro_rules! saturating_int_impl_unsigned {
             ///
             /// # Examples
             ///
-            /// Basic usage:
-            ///
             /// ```
-            /// #![feature(saturating_int_impl)]
             /// use std::num::Saturating;
             ///
             #[doc = concat!("assert!(Saturating(16", stringify!($t), ").is_power_of_two());")]
@@ -958,8 +1051,9 @@ macro_rules! saturating_int_impl_unsigned {
             /// ```
             #[must_use]
             #[inline]
-            #[unstable(feature = "saturating_int_impl", issue = "87920")]
-            pub fn is_power_of_two(self) -> bool {
+            #[rustc_const_stable(feature = "saturating_int_impl", since = "1.74.0")]
+            #[stable(feature = "saturating_int_impl", since = "1.74.0")]
+            pub const fn is_power_of_two(self) -> bool {
                 self.0.is_power_of_two()
             }
 

@@ -35,8 +35,8 @@
 //!
 //! let version = parse_version(&[1, 2, 3, 4]);
 //! match version {
-//!     Ok(v) => println!("working with version: {:?}", v),
-//!     Err(e) => println!("error parsing header: {:?}", e),
+//!     Ok(v) => println!("working with version: {v:?}"),
+//!     Err(e) => println!("error parsing header: {e:?}"),
 //! }
 //! ```
 //!
@@ -45,25 +45,29 @@
 //! that make working with it more succinct.
 //!
 //! ```
+//! // The `is_ok` and `is_err` methods do what they say.
 //! let good_result: Result<i32, i32> = Ok(10);
 //! let bad_result: Result<i32, i32> = Err(10);
-//!
-//! // The `is_ok` and `is_err` methods do what they say.
 //! assert!(good_result.is_ok() && !good_result.is_err());
 //! assert!(bad_result.is_err() && !bad_result.is_ok());
 //!
-//! // `map` consumes the `Result` and produces another.
+//! // `map` and `map_err` consume the `Result` and produce another.
 //! let good_result: Result<i32, i32> = good_result.map(|i| i + 1);
-//! let bad_result: Result<i32, i32> = bad_result.map(|i| i - 1);
+//! let bad_result: Result<i32, i32> = bad_result.map_err(|i| i - 1);
+//! assert_eq!(good_result, Ok(11));
+//! assert_eq!(bad_result, Err(9));
 //!
 //! // Use `and_then` to continue the computation.
 //! let good_result: Result<bool, i32> = good_result.and_then(|i| Ok(i == 11));
+//! assert_eq!(good_result, Ok(true));
 //!
 //! // Use `or_else` to handle the error.
 //! let bad_result: Result<i32, i32> = bad_result.or_else(|i| Ok(i + 20));
+//! assert_eq!(bad_result, Ok(29));
 //!
 //! // Consume the result and return the contents with `unwrap`.
 //! let final_awesome_result = good_result.unwrap();
+//! assert!(final_awesome_result)
 //! ```
 //!
 //! # Results must be used
@@ -209,11 +213,10 @@
 //!
 //! *It's much nicer!*
 //!
-//! Ending the expression with [`?`] will result in the unwrapped
-//! success ([`Ok`]) value, unless the result is [`Err`], in which case
-//! [`Err`] is returned early from the enclosing function.
+//! Ending the expression with [`?`] will result in the [`Ok`]'s unwrapped value, unless the result
+//! is [`Err`], in which case [`Err`] is returned early from the enclosing function.
 //!
-//! [`?`] can only be used in functions that return [`Result`] because of the
+//! [`?`] can be used in functions that return [`Result`] because of the
 //! early return of [`Err`] that it provides.
 //!
 //! [`expect`]: Result::expect
@@ -225,6 +228,34 @@
 //! [`Err(E)`]: Err
 //! [io::Error]: ../../std/io/struct.Error.html "io::Error"
 //!
+//! # Representation
+//!
+//! In some cases, [`Result<T, E>`] comes with size, alignment, and ABI
+//! guarantees. Specifically, one of either the `T` or `E` type must be a type
+//! that qualifies for the `Option` [representation guarantees][opt-rep] (let's
+//! call that type `I`), and the *other* type is a zero-sized type with
+//! alignment 1 (a "1-ZST").
+//!
+//! If that is the case, then `Result<T, E>` has the same size, alignment, and
+//! [function call ABI] as `I` (and therefore, as `Option<I>`). If `I` is `T`,
+//! it is therefore sound to transmute a value `t` of type `I` to type
+//! `Result<T, E>` (producing the value `Ok(t)`) and to transmute a value
+//! `Ok(t)` of type `Result<T, E>` to type `I` (producing the value `t`). If `I`
+//! is `E`, the same applies with `Ok` replaced by `Err`.
+//!
+//! For example, `NonZeroI32` qualifies for the `Option` representation
+//! guarantees and `()` is a zero-sized type with alignment 1. This means that
+//! both `Result<NonZeroI32, ()>` and `Result<(), NonZeroI32>` have the same
+//! size, alignment, and ABI as `NonZeroI32` (and `Option<NonZeroI32>`). The
+//! only difference between these is in the implied semantics:
+//!
+//! * `Option<NonZeroI32>` is "a non-zero i32 might be present"
+//! * `Result<NonZeroI32, ()>` is "a non-zero i32 success result, if any"
+//! * `Result<(), NonZeroI32>` is "a non-zero i32 error result, if any"
+//!
+//! [opt-rep]: ../option/index.html#representation "Option Representation"
+//! [function call ABI]: ../primitive.fn.html#abi-compatibility
+//!
 //! # Method overview
 //!
 //! In addition to working with pattern matching, [`Result`] provides a
@@ -235,8 +266,14 @@
 //! The [`is_ok`] and [`is_err`] methods return [`true`] if the [`Result`]
 //! is [`Ok`] or [`Err`], respectively.
 //!
+//! The [`is_ok_and`] and [`is_err_and`] methods apply the provided function
+//! to the contents of the [`Result`] to produce a boolean value. If the [`Result`] does not have the expected variant
+//! then [`false`] is returned instead without executing the function.
+//!
 //! [`is_err`]: Result::is_err
 //! [`is_ok`]: Result::is_ok
+//! [`is_ok_and`]: Result::is_ok_and
+//! [`is_err_and`]: Result::is_err_and
 //!
 //! ## Adapters for working with references
 //!
@@ -263,6 +300,7 @@
 //!   (which must implement the [`Default`] trait)
 //! * [`unwrap_or_else`] returns the result of evaluating the provided
 //!   function
+//! * [`unwrap_unchecked`] produces *[undefined behavior]*
 //!
 //! The panicking methods [`expect`] and [`unwrap`] require `E` to
 //! implement the [`Debug`] trait.
@@ -273,6 +311,8 @@
 //! [`unwrap_or`]: Result::unwrap_or
 //! [`unwrap_or_default`]: Result::unwrap_or_default
 //! [`unwrap_or_else`]: Result::unwrap_or_else
+//! [`unwrap_unchecked`]: Result::unwrap_unchecked
+//! [undefined behavior]: https://doc.rust-lang.org/reference/behavior-considered-undefined.html
 //!
 //! These methods extract the contained value in a [`Result<T, E>`] when it
 //! is the [`Err`] variant. They require `T` to implement the [`Debug`]
@@ -280,10 +320,13 @@
 //!
 //! * [`expect_err`] panics with a provided custom message
 //! * [`unwrap_err`] panics with a generic message
+//! * [`unwrap_err_unchecked`] produces *[undefined behavior]*
 //!
 //! [`Debug`]: crate::fmt::Debug
 //! [`expect_err`]: Result::expect_err
 //! [`unwrap_err`]: Result::unwrap_err
+//! [`unwrap_err_unchecked`]: Result::unwrap_err_unchecked
+//! [undefined behavior]: https://doc.rust-lang.org/reference/behavior-considered-undefined.html
 //!
 //! ## Transforming contained values
 //!
@@ -306,21 +349,29 @@
 //! [`Some(v)`]: Option::Some
 //! [`transpose`]: Result::transpose
 //!
-//! This method transforms the contained value of the [`Ok`] variant:
+//! These methods transform the contained value of the [`Ok`] variant:
 //!
 //! * [`map`] transforms [`Result<T, E>`] into [`Result<U, E>`] by applying
 //!   the provided function to the contained value of [`Ok`] and leaving
 //!   [`Err`] values unchanged
+//! * [`inspect`] takes ownership of the [`Result`], applies the
+//!   provided function to the contained value by reference,
+//!   and then returns the [`Result`]
 //!
 //! [`map`]: Result::map
+//! [`inspect`]: Result::inspect
 //!
-//! This method transforms the contained value of the [`Err`] variant:
+//! These methods transform the contained value of the [`Err`] variant:
 //!
 //! * [`map_err`] transforms [`Result<T, E>`] into [`Result<T, F>`] by
 //!   applying the provided function to the contained value of [`Err`] and
 //!   leaving [`Ok`] values unchanged
+//! * [`inspect_err`] takes ownership of the [`Result`], applies the
+//!   provided function to the contained value of [`Err`] by reference,
+//!   and then returns the [`Result`]
 //!
 //! [`map_err`]: Result::map_err
+//! [`inspect_err`]: Result::inspect_err
 //!
 //! These methods transform a [`Result<T, E>`] into a value of a possibly
 //! different type `U`:
@@ -436,7 +487,7 @@
 //! # use std::str::FromStr;
 //! let mut results = vec![];
 //! let mut errs = vec![];
-//! let nums: Vec<_> = vec!["17", "not a number", "99", "-27", "768"]
+//! let nums: Vec<_> = ["17", "not a number", "99", "-27", "768"]
 //!    .into_iter()
 //!    .map(u8::from_str)
 //!    // Save clones of the raw `Result` values to inspect
@@ -447,9 +498,9 @@
 //!    .collect();
 //! assert_eq!(errs.len(), 3);
 //! assert_eq!(nums, [17, 99]);
-//! println!("results {:?}", results);
-//! println!("errs {:?}", errs);
-//! println!("nums {:?}", nums);
+//! println!("results {results:?}");
+//! println!("errs {errs:?}");
+//! println!("nums {nums:?}");
 //! ```
 //!
 //! ## Collecting into `Result`
@@ -459,13 +510,13 @@
 //! [`Result`] of a collection of each contained value of the original
 //! [`Result`] values, or [`Err`] if any of the elements was [`Err`].
 //!
-//! [impl-FromIterator]: Result#impl-FromIterator%3CResult%3CA%2C%20E%3E%3E
+//! [impl-FromIterator]: Result#impl-FromIterator%3CResult%3CA,+E%3E%3E-for-Result%3CV,+E%3E
 //!
 //! ```
-//! let v = vec![Ok(2), Ok(4), Err("err!"), Ok(8)];
+//! let v = [Ok(2), Ok(4), Err("err!"), Ok(8)];
 //! let res: Result<Vec<_>, &str> = v.into_iter().collect();
 //! assert_eq!(res, Err("err!"));
-//! let v = vec![Ok(2), Ok(4), Ok(8)];
+//! let v = [Ok(2), Ok(4), Ok(8)];
 //! let res: Result<Vec<_>, &str> = v.into_iter().collect();
 //! assert_eq!(res, Ok(vec![2, 4, 8]));
 //! ```
@@ -475,28 +526,31 @@
 //! to provide the [`product`][Iterator::product] and
 //! [`sum`][Iterator::sum] methods.
 //!
-//! [impl-Product]: Result#impl-Product%3CResult%3CU%2C%20E%3E%3E
-//! [impl-Sum]: Result#impl-Sum%3CResult%3CU%2C%20E%3E%3E
+//! [impl-Product]: Result#impl-Product%3CResult%3CU,+E%3E%3E-for-Result%3CT,+E%3E
+//! [impl-Sum]: Result#impl-Sum%3CResult%3CU,+E%3E%3E-for-Result%3CT,+E%3E
 //!
 //! ```
-//! let v = vec![Err("error!"), Ok(1), Ok(2), Ok(3), Err("foo")];
+//! let v = [Err("error!"), Ok(1), Ok(2), Ok(3), Err("foo")];
 //! let res: Result<i32, &str> = v.into_iter().sum();
 //! assert_eq!(res, Err("error!"));
-//! let v: Vec<Result<i32, &str>> = vec![Ok(1), Ok(2), Ok(21)];
+//! let v = [Ok(1), Ok(2), Ok(21)];
 //! let res: Result<i32, &str> = v.into_iter().product();
 //! assert_eq!(res, Ok(42));
 //! ```
 
 #![stable(feature = "rust1", since = "1.0.0")]
 
-use crate::iter::{self, FromIterator, FusedIterator, TrustedLen};
+use crate::iter::{self, FusedIterator, TrustedLen};
+use crate::marker::Destruct;
 use crate::ops::{self, ControlFlow, Deref, DerefMut};
 use crate::{convert, fmt, hint};
 
 /// `Result` is a type that represents either success ([`Ok`]) or failure ([`Err`]).
 ///
 /// See the [module documentation](self) for details.
-#[derive(Copy, PartialEq, PartialOrd, Eq, Ord, Debug, Hash)]
+#[doc(search_unbox)]
+#[derive(Copy, Debug, Hash)]
+#[derive_const(PartialEq, PartialOrd, Eq, Ord)]
 #[must_use = "this `Result` may be an `Err` variant, which should be handled"]
 #[rustc_diagnostic_item = "Result"]
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -525,8 +579,6 @@ impl<T, E> Result<T, E> {
     ///
     /// # Examples
     ///
-    /// Basic usage:
-    ///
     /// ```
     /// let x: Result<i32, &str> = Ok(-3);
     /// assert_eq!(x.is_ok(), true);
@@ -535,18 +587,50 @@ impl<T, E> Result<T, E> {
     /// assert_eq!(x.is_ok(), false);
     /// ```
     #[must_use = "if you intended to assert that this is ok, consider `.unwrap()` instead"]
-    #[rustc_const_stable(feature = "const_result", since = "1.48.0")]
+    #[rustc_const_stable(feature = "const_result_basics", since = "1.48.0")]
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     pub const fn is_ok(&self) -> bool {
         matches!(*self, Ok(_))
     }
 
-    /// Returns `true` if the result is [`Err`].
+    /// Returns `true` if the result is [`Ok`] and the value inside of it matches a predicate.
     ///
     /// # Examples
     ///
-    /// Basic usage:
+    /// ```
+    /// let x: Result<u32, &str> = Ok(2);
+    /// assert_eq!(x.is_ok_and(|x| x > 1), true);
+    ///
+    /// let x: Result<u32, &str> = Ok(0);
+    /// assert_eq!(x.is_ok_and(|x| x > 1), false);
+    ///
+    /// let x: Result<u32, &str> = Err("hey");
+    /// assert_eq!(x.is_ok_and(|x| x > 1), false);
+    ///
+    /// let x: Result<String, &str> = Ok("ownership".to_string());
+    /// assert_eq!(x.as_ref().is_ok_and(|x| x.len() > 1), true);
+    /// println!("still alive {:?}", x);
+    /// ```
+    #[must_use]
+    #[inline]
+    #[stable(feature = "is_some_and", since = "1.70.0")]
+    #[rustc_const_unstable(feature = "const_result_trait_fn", issue = "144211")]
+    pub const fn is_ok_and<F>(self, f: F) -> bool
+    where
+        F: [const] FnOnce(T) -> bool + [const] Destruct,
+        T: [const] Destruct,
+        E: [const] Destruct,
+    {
+        match self {
+            Err(_) => false,
+            Ok(x) => f(x),
+        }
+    }
+
+    /// Returns `true` if the result is [`Err`].
+    ///
+    /// # Examples
     ///
     /// ```
     /// let x: Result<i32, &str> = Ok(-3);
@@ -556,68 +640,46 @@ impl<T, E> Result<T, E> {
     /// assert_eq!(x.is_err(), true);
     /// ```
     #[must_use = "if you intended to assert that this is err, consider `.unwrap_err()` instead"]
-    #[rustc_const_stable(feature = "const_result", since = "1.48.0")]
+    #[rustc_const_stable(feature = "const_result_basics", since = "1.48.0")]
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     pub const fn is_err(&self) -> bool {
         !self.is_ok()
     }
 
-    /// Returns `true` if the result is an [`Ok`] value containing the given value.
+    /// Returns `true` if the result is [`Err`] and the value inside of it matches a predicate.
     ///
     /// # Examples
     ///
     /// ```
-    /// #![feature(option_result_contains)]
+    /// use std::io::{Error, ErrorKind};
     ///
-    /// let x: Result<u32, &str> = Ok(2);
-    /// assert_eq!(x.contains(&2), true);
+    /// let x: Result<u32, Error> = Err(Error::new(ErrorKind::NotFound, "!"));
+    /// assert_eq!(x.is_err_and(|x| x.kind() == ErrorKind::NotFound), true);
     ///
-    /// let x: Result<u32, &str> = Ok(3);
-    /// assert_eq!(x.contains(&2), false);
+    /// let x: Result<u32, Error> = Err(Error::new(ErrorKind::PermissionDenied, "!"));
+    /// assert_eq!(x.is_err_and(|x| x.kind() == ErrorKind::NotFound), false);
     ///
-    /// let x: Result<u32, &str> = Err("Some error message");
-    /// assert_eq!(x.contains(&2), false);
+    /// let x: Result<u32, Error> = Ok(123);
+    /// assert_eq!(x.is_err_and(|x| x.kind() == ErrorKind::NotFound), false);
+    ///
+    /// let x: Result<u32, String> = Err("ownership".to_string());
+    /// assert_eq!(x.as_ref().is_err_and(|x| x.len() > 1), true);
+    /// println!("still alive {:?}", x);
     /// ```
     #[must_use]
     #[inline]
-    #[unstable(feature = "option_result_contains", issue = "62358")]
-    pub fn contains<U>(&self, x: &U) -> bool
+    #[stable(feature = "is_some_and", since = "1.70.0")]
+    #[rustc_const_unstable(feature = "const_result_trait_fn", issue = "144211")]
+    pub const fn is_err_and<F>(self, f: F) -> bool
     where
-        U: PartialEq<T>,
-    {
-        match self {
-            Ok(y) => x == y,
-            Err(_) => false,
-        }
-    }
-
-    /// Returns `true` if the result is an [`Err`] value containing the given value.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// #![feature(result_contains_err)]
-    ///
-    /// let x: Result<u32, &str> = Ok(2);
-    /// assert_eq!(x.contains_err(&"Some error message"), false);
-    ///
-    /// let x: Result<u32, &str> = Err("Some error message");
-    /// assert_eq!(x.contains_err(&"Some error message"), true);
-    ///
-    /// let x: Result<u32, &str> = Err("Some other error message");
-    /// assert_eq!(x.contains_err(&"Some error message"), false);
-    /// ```
-    #[must_use]
-    #[inline]
-    #[unstable(feature = "result_contains_err", issue = "62358")]
-    pub fn contains_err<F>(&self, f: &F) -> bool
-    where
-        F: PartialEq<E>,
+        F: [const] FnOnce(E) -> bool + [const] Destruct,
+        E: [const] Destruct,
+        T: [const] Destruct,
     {
         match self {
             Ok(_) => false,
-            Err(e) => f == e,
+            Err(e) => f(e),
         }
     }
 
@@ -632,8 +694,6 @@ impl<T, E> Result<T, E> {
     ///
     /// # Examples
     ///
-    /// Basic usage:
-    ///
     /// ```
     /// let x: Result<u32, &str> = Ok(2);
     /// assert_eq!(x.ok(), Some(2));
@@ -643,7 +703,13 @@ impl<T, E> Result<T, E> {
     /// ```
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
-    pub fn ok(self) -> Option<T> {
+    #[rustc_const_unstable(feature = "const_result_trait_fn", issue = "144211")]
+    #[rustc_diagnostic_item = "result_ok_method"]
+    pub const fn ok(self) -> Option<T>
+    where
+        T: [const] Destruct,
+        E: [const] Destruct,
+    {
         match self {
             Ok(x) => Some(x),
             Err(_) => None,
@@ -657,8 +723,6 @@ impl<T, E> Result<T, E> {
     ///
     /// # Examples
     ///
-    /// Basic usage:
-    ///
     /// ```
     /// let x: Result<u32, &str> = Ok(2);
     /// assert_eq!(x.err(), None);
@@ -668,7 +732,12 @@ impl<T, E> Result<T, E> {
     /// ```
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
-    pub fn err(self) -> Option<E> {
+    #[rustc_const_unstable(feature = "const_result_trait_fn", issue = "144211")]
+    pub const fn err(self) -> Option<E>
+    where
+        T: [const] Destruct,
+        E: [const] Destruct,
+    {
         match self {
             Ok(_) => None,
             Err(x) => Some(x),
@@ -686,8 +755,6 @@ impl<T, E> Result<T, E> {
     ///
     /// # Examples
     ///
-    /// Basic usage:
-    ///
     /// ```
     /// let x: Result<u32, &str> = Ok(2);
     /// assert_eq!(x.as_ref(), Ok(&2));
@@ -696,7 +763,7 @@ impl<T, E> Result<T, E> {
     /// assert_eq!(x.as_ref(), Err(&"Error"));
     /// ```
     #[inline]
-    #[rustc_const_stable(feature = "const_result", since = "1.48.0")]
+    #[rustc_const_stable(feature = "const_result_basics", since = "1.48.0")]
     #[stable(feature = "rust1", since = "1.0.0")]
     pub const fn as_ref(&self) -> Result<&T, &E> {
         match *self {
@@ -708,8 +775,6 @@ impl<T, E> Result<T, E> {
     /// Converts from `&mut Result<T, E>` to `Result<&mut T, &mut E>`.
     ///
     /// # Examples
-    ///
-    /// Basic usage:
     ///
     /// ```
     /// fn mutate(r: &mut Result<i32, i32>) {
@@ -729,7 +794,7 @@ impl<T, E> Result<T, E> {
     /// ```
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
-    #[rustc_const_unstable(feature = "const_result", issue = "82814")]
+    #[rustc_const_stable(feature = "const_result", since = "1.83.0")]
     pub const fn as_mut(&mut self) -> Result<&mut T, &mut E> {
         match *self {
             Ok(ref mut x) => Ok(x),
@@ -755,14 +820,18 @@ impl<T, E> Result<T, E> {
     ///
     /// for num in line.lines() {
     ///     match num.parse::<i32>().map(|i| i * 2) {
-    ///         Ok(n) => println!("{}", n),
+    ///         Ok(n) => println!("{n}"),
     ///         Err(..) => {}
     ///     }
     /// }
     /// ```
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
-    pub fn map<U, F: FnOnce(T) -> U>(self, op: F) -> Result<U, E> {
+    #[rustc_const_unstable(feature = "const_result_trait_fn", issue = "144211")]
+    pub const fn map<U, F>(self, op: F) -> Result<U, E>
+    where
+        F: [const] FnOnce(T) -> U + [const] Destruct,
+    {
         match self {
             Ok(t) => Ok(op(t)),
             Err(e) => Err(e),
@@ -770,7 +839,7 @@ impl<T, E> Result<T, E> {
     }
 
     /// Returns the provided default (if [`Err`]), or
-    /// applies a function to the contained value (if [`Ok`]),
+    /// applies a function to the contained value (if [`Ok`]).
     ///
     /// Arguments passed to `map_or` are eagerly evaluated; if you are passing
     /// the result of a function call, it is recommended to use [`map_or_else`],
@@ -789,7 +858,15 @@ impl<T, E> Result<T, E> {
     /// ```
     #[inline]
     #[stable(feature = "result_map_or", since = "1.41.0")]
-    pub fn map_or<U, F: FnOnce(T) -> U>(self, default: U, f: F) -> U {
+    #[rustc_const_unstable(feature = "const_result_trait_fn", issue = "144211")]
+    #[must_use = "if you don't need the returned value, use `if let` instead"]
+    pub const fn map_or<U, F>(self, default: U, f: F) -> U
+    where
+        F: [const] FnOnce(T) -> U + [const] Destruct,
+        T: [const] Destruct,
+        E: [const] Destruct,
+        U: [const] Destruct,
+    {
         match self {
             Ok(t) => f(t),
             Err(_) => default,
@@ -805,8 +882,6 @@ impl<T, E> Result<T, E> {
     ///
     /// # Examples
     ///
-    /// Basic usage:
-    ///
     /// ```
     /// let k = 21;
     ///
@@ -818,10 +893,48 @@ impl<T, E> Result<T, E> {
     /// ```
     #[inline]
     #[stable(feature = "result_map_or_else", since = "1.41.0")]
-    pub fn map_or_else<U, D: FnOnce(E) -> U, F: FnOnce(T) -> U>(self, default: D, f: F) -> U {
+    #[rustc_const_unstable(feature = "const_result_trait_fn", issue = "144211")]
+    pub const fn map_or_else<U, D, F>(self, default: D, f: F) -> U
+    where
+        D: [const] FnOnce(E) -> U + [const] Destruct,
+        F: [const] FnOnce(T) -> U + [const] Destruct,
+    {
         match self {
             Ok(t) => f(t),
             Err(e) => default(e),
+        }
+    }
+
+    /// Maps a `Result<T, E>` to a `U` by applying function `f` to the contained
+    /// value if the result is [`Ok`], otherwise if [`Err`], returns the
+    /// [default value] for the type `U`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// #![feature(result_option_map_or_default)]
+    ///
+    /// let x: Result<_, &str> = Ok("foo");
+    /// let y: Result<&str, _> = Err("bar");
+    ///
+    /// assert_eq!(x.map_or_default(|x| x.len()), 3);
+    /// assert_eq!(y.map_or_default(|y| y.len()), 0);
+    /// ```
+    ///
+    /// [default value]: Default::default
+    #[inline]
+    #[unstable(feature = "result_option_map_or_default", issue = "138099")]
+    #[rustc_const_unstable(feature = "const_result_trait_fn", issue = "144211")]
+    pub const fn map_or_default<U, F>(self, f: F) -> U
+    where
+        F: [const] FnOnce(T) -> U + [const] Destruct,
+        U: [const] Default,
+        T: [const] Destruct,
+        E: [const] Destruct,
+    {
+        match self {
+            Ok(t) => f(t),
+            Err(_) => U::default(),
         }
     }
 
@@ -834,10 +947,8 @@ impl<T, E> Result<T, E> {
     ///
     /// # Examples
     ///
-    /// Basic usage:
-    ///
     /// ```
-    /// fn stringify(x: u32) -> String { format!("error code: {}", x) }
+    /// fn stringify(x: u32) -> String { format!("error code: {x}") }
     ///
     /// let x: Result<u32, u32> = Ok(2);
     /// assert_eq!(x.map_err(stringify), Ok(2));
@@ -847,29 +958,37 @@ impl<T, E> Result<T, E> {
     /// ```
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
-    pub fn map_err<F, O: FnOnce(E) -> F>(self, op: O) -> Result<T, F> {
+    #[rustc_const_unstable(feature = "const_result_trait_fn", issue = "144211")]
+    pub const fn map_err<F, O>(self, op: O) -> Result<T, F>
+    where
+        O: [const] FnOnce(E) -> F + [const] Destruct,
+    {
         match self {
             Ok(t) => Ok(t),
             Err(e) => Err(op(e)),
         }
     }
 
-    /// Calls the provided closure with a reference to the contained value (if [`Ok`]).
+    /// Calls a function with a reference to the contained value if [`Ok`].
+    ///
+    /// Returns the original result.
     ///
     /// # Examples
     ///
     /// ```
-    /// #![feature(result_option_inspect)]
-    ///
     /// let x: u8 = "4"
     ///     .parse::<u8>()
-    ///     .inspect(|x| println!("original: {}", x))
+    ///     .inspect(|x| println!("original: {x}"))
     ///     .map(|x| x.pow(3))
     ///     .expect("failed to parse number");
     /// ```
     #[inline]
-    #[unstable(feature = "result_option_inspect", issue = "91345")]
-    pub fn inspect<F: FnOnce(&T)>(self, f: F) -> Self {
+    #[stable(feature = "result_option_inspect", since = "1.76.0")]
+    #[rustc_const_unstable(feature = "const_result_trait_fn", issue = "144211")]
+    pub const fn inspect<F>(self, f: F) -> Self
+    where
+        F: [const] FnOnce(&T) + [const] Destruct,
+    {
         if let Ok(ref t) = self {
             f(t);
         }
@@ -877,28 +996,86 @@ impl<T, E> Result<T, E> {
         self
     }
 
-    /// Calls the provided closure with a reference to the contained error (if [`Err`]).
+    /// Calls a function with a reference to the contained value if [`Err`].
+    ///
+    /// Returns the original result.
     ///
     /// # Examples
     ///
     /// ```
-    /// #![feature(result_option_inspect)]
-    ///
     /// use std::{fs, io};
     ///
     /// fn read() -> io::Result<String> {
     ///     fs::read_to_string("address.txt")
-    ///         .inspect_err(|e| eprintln!("failed to read file: {}", e))
+    ///         .inspect_err(|e| eprintln!("failed to read file: {e}"))
     /// }
     /// ```
     #[inline]
-    #[unstable(feature = "result_option_inspect", issue = "91345")]
-    pub fn inspect_err<F: FnOnce(&E)>(self, f: F) -> Self {
+    #[stable(feature = "result_option_inspect", since = "1.76.0")]
+    #[rustc_const_unstable(feature = "const_result_trait_fn", issue = "144211")]
+    pub const fn inspect_err<F>(self, f: F) -> Self
+    where
+        F: [const] FnOnce(&E) + [const] Destruct,
+    {
         if let Err(ref e) = self {
             f(e);
         }
 
         self
+    }
+
+    /// Converts from `Result<T, E>` (or `&Result<T, E>`) to `Result<&<T as Deref>::Target, &E>`.
+    ///
+    /// Coerces the [`Ok`] variant of the original [`Result`] via [`Deref`](crate::ops::Deref)
+    /// and returns the new [`Result`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let x: Result<String, u32> = Ok("hello".to_string());
+    /// let y: Result<&str, &u32> = Ok("hello");
+    /// assert_eq!(x.as_deref(), y);
+    ///
+    /// let x: Result<String, u32> = Err(42);
+    /// let y: Result<&str, &u32> = Err(&42);
+    /// assert_eq!(x.as_deref(), y);
+    /// ```
+    #[inline]
+    #[stable(feature = "inner_deref", since = "1.47.0")]
+    #[rustc_const_unstable(feature = "const_convert", issue = "143773")]
+    pub const fn as_deref(&self) -> Result<&T::Target, &E>
+    where
+        T: [const] Deref,
+    {
+        self.as_ref().map(Deref::deref)
+    }
+
+    /// Converts from `Result<T, E>` (or `&mut Result<T, E>`) to `Result<&mut <T as DerefMut>::Target, &mut E>`.
+    ///
+    /// Coerces the [`Ok`] variant of the original [`Result`] via [`DerefMut`](crate::ops::DerefMut)
+    /// and returns the new [`Result`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let mut s = "HELLO".to_string();
+    /// let mut x: Result<String, u32> = Ok("hello".to_string());
+    /// let y: Result<&mut str, &mut u32> = Ok(&mut s);
+    /// assert_eq!(x.as_deref_mut().map(|x| { x.make_ascii_uppercase(); x }), y);
+    ///
+    /// let mut i = 42;
+    /// let mut x: Result<String, u32> = Err(42);
+    /// let y: Result<&mut str, &mut u32> = Err(&mut i);
+    /// assert_eq!(x.as_deref_mut().map(|x| { x.make_ascii_uppercase(); x }), y);
+    /// ```
+    #[inline]
+    #[stable(feature = "inner_deref", since = "1.47.0")]
+    #[rustc_const_unstable(feature = "const_convert", issue = "143773")]
+    pub const fn as_deref_mut(&mut self) -> Result<&mut T::Target, &mut E>
+    where
+        T: [const] DerefMut,
+    {
+        self.as_mut().map(DerefMut::deref_mut)
     }
 
     /////////////////////////////////////////////////////////////////////////
@@ -911,8 +1088,6 @@ impl<T, E> Result<T, E> {
     ///
     /// # Examples
     ///
-    /// Basic usage:
-    ///
     /// ```
     /// let x: Result<u32, &str> = Ok(7);
     /// assert_eq!(x.iter().next(), Some(&7));
@@ -922,7 +1097,8 @@ impl<T, E> Result<T, E> {
     /// ```
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
-    pub fn iter(&self) -> Iter<'_, T> {
+    #[rustc_const_unstable(feature = "const_result_trait_fn", issue = "144211")]
+    pub const fn iter(&self) -> Iter<'_, T> {
         Iter { inner: self.as_ref().ok() }
     }
 
@@ -931,8 +1107,6 @@ impl<T, E> Result<T, E> {
     /// The iterator yields one value if the result is [`Result::Ok`], otherwise none.
     ///
     /// # Examples
-    ///
-    /// Basic usage:
     ///
     /// ```
     /// let mut x: Result<u32, &str> = Ok(7);
@@ -947,337 +1121,25 @@ impl<T, E> Result<T, E> {
     /// ```
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
-    pub fn iter_mut(&mut self) -> IterMut<'_, T> {
+    #[rustc_const_unstable(feature = "const_result_trait_fn", issue = "144211")]
+    pub const fn iter_mut(&mut self) -> IterMut<'_, T> {
         IterMut { inner: self.as_mut().ok() }
     }
 
-    ////////////////////////////////////////////////////////////////////////
-    // Boolean operations on the values, eager and lazy
+    /////////////////////////////////////////////////////////////////////////
+    // Extract a value
     /////////////////////////////////////////////////////////////////////////
 
-    /// Returns `res` if the result is [`Ok`], otherwise returns the [`Err`] value of `self`.
-    ///
-    ///
-    /// # Examples
-    ///
-    /// Basic usage:
-    ///
-    /// ```
-    /// let x: Result<u32, &str> = Ok(2);
-    /// let y: Result<&str, &str> = Err("late error");
-    /// assert_eq!(x.and(y), Err("late error"));
-    ///
-    /// let x: Result<u32, &str> = Err("early error");
-    /// let y: Result<&str, &str> = Ok("foo");
-    /// assert_eq!(x.and(y), Err("early error"));
-    ///
-    /// let x: Result<u32, &str> = Err("not a 2");
-    /// let y: Result<&str, &str> = Err("late error");
-    /// assert_eq!(x.and(y), Err("not a 2"));
-    ///
-    /// let x: Result<u32, &str> = Ok(2);
-    /// let y: Result<&str, &str> = Ok("different result type");
-    /// assert_eq!(x.and(y), Ok("different result type"));
-    /// ```
-    #[inline]
-    #[stable(feature = "rust1", since = "1.0.0")]
-    pub fn and<U>(self, res: Result<U, E>) -> Result<U, E> {
-        match self {
-            Ok(_) => res,
-            Err(e) => Err(e),
-        }
-    }
-
-    /// Calls `op` if the result is [`Ok`], otherwise returns the [`Err`] value of `self`.
-    ///
-    ///
-    /// This function can be used for control flow based on `Result` values.
-    ///
-    /// # Examples
-    ///
-    /// Basic usage:
-    ///
-    /// ```
-    /// fn sq(x: u32) -> Result<u32, u32> { Ok(x * x) }
-    /// fn err(x: u32) -> Result<u32, u32> { Err(x) }
-    ///
-    /// assert_eq!(Ok(2).and_then(sq).and_then(sq), Ok(16));
-    /// assert_eq!(Ok(2).and_then(sq).and_then(err), Err(4));
-    /// assert_eq!(Ok(2).and_then(err).and_then(sq), Err(2));
-    /// assert_eq!(Err(3).and_then(sq).and_then(sq), Err(3));
-    /// ```
-    #[inline]
-    #[stable(feature = "rust1", since = "1.0.0")]
-    pub fn and_then<U, F: FnOnce(T) -> Result<U, E>>(self, op: F) -> Result<U, E> {
-        match self {
-            Ok(t) => op(t),
-            Err(e) => Err(e),
-        }
-    }
-
-    /// Returns `res` if the result is [`Err`], otherwise returns the [`Ok`] value of `self`.
-    ///
-    /// Arguments passed to `or` are eagerly evaluated; if you are passing the
-    /// result of a function call, it is recommended to use [`or_else`], which is
-    /// lazily evaluated.
-    ///
-    /// [`or_else`]: Result::or_else
-    ///
-    /// # Examples
-    ///
-    /// Basic usage:
-    ///
-    /// ```
-    /// let x: Result<u32, &str> = Ok(2);
-    /// let y: Result<u32, &str> = Err("late error");
-    /// assert_eq!(x.or(y), Ok(2));
-    ///
-    /// let x: Result<u32, &str> = Err("early error");
-    /// let y: Result<u32, &str> = Ok(2);
-    /// assert_eq!(x.or(y), Ok(2));
-    ///
-    /// let x: Result<u32, &str> = Err("not a 2");
-    /// let y: Result<u32, &str> = Err("late error");
-    /// assert_eq!(x.or(y), Err("late error"));
-    ///
-    /// let x: Result<u32, &str> = Ok(2);
-    /// let y: Result<u32, &str> = Ok(100);
-    /// assert_eq!(x.or(y), Ok(2));
-    /// ```
-    #[inline]
-    #[stable(feature = "rust1", since = "1.0.0")]
-    pub fn or<F>(self, res: Result<T, F>) -> Result<T, F> {
-        match self {
-            Ok(v) => Ok(v),
-            Err(_) => res,
-        }
-    }
-
-    /// Calls `op` if the result is [`Err`], otherwise returns the [`Ok`] value of `self`.
-    ///
-    /// This function can be used for control flow based on result values.
-    ///
-    ///
-    /// # Examples
-    ///
-    /// Basic usage:
-    ///
-    /// ```
-    /// fn sq(x: u32) -> Result<u32, u32> { Ok(x * x) }
-    /// fn err(x: u32) -> Result<u32, u32> { Err(x) }
-    ///
-    /// assert_eq!(Ok(2).or_else(sq).or_else(sq), Ok(2));
-    /// assert_eq!(Ok(2).or_else(err).or_else(sq), Ok(2));
-    /// assert_eq!(Err(3).or_else(sq).or_else(err), Ok(9));
-    /// assert_eq!(Err(3).or_else(err).or_else(err), Err(3));
-    /// ```
-    #[inline]
-    #[stable(feature = "rust1", since = "1.0.0")]
-    pub fn or_else<F, O: FnOnce(E) -> Result<T, F>>(self, op: O) -> Result<T, F> {
-        match self {
-            Ok(t) => Ok(t),
-            Err(e) => op(e),
-        }
-    }
-
-    /// Returns the contained [`Ok`] value or a provided default.
-    ///
-    /// Arguments passed to `unwrap_or` are eagerly evaluated; if you are passing
-    /// the result of a function call, it is recommended to use [`unwrap_or_else`],
-    /// which is lazily evaluated.
-    ///
-    /// [`unwrap_or_else`]: Result::unwrap_or_else
-    ///
-    /// # Examples
-    ///
-    /// Basic usage:
-    ///
-    /// ```
-    /// let default = 2;
-    /// let x: Result<u32, &str> = Ok(9);
-    /// assert_eq!(x.unwrap_or(default), 9);
-    ///
-    /// let x: Result<u32, &str> = Err("error");
-    /// assert_eq!(x.unwrap_or(default), default);
-    /// ```
-    #[inline]
-    #[stable(feature = "rust1", since = "1.0.0")]
-    pub fn unwrap_or(self, default: T) -> T {
-        match self {
-            Ok(t) => t,
-            Err(_) => default,
-        }
-    }
-
-    /// Returns the contained [`Ok`] value or computes it from a closure.
-    ///
-    ///
-    /// # Examples
-    ///
-    /// Basic usage:
-    ///
-    /// ```
-    /// fn count(x: &str) -> usize { x.len() }
-    ///
-    /// assert_eq!(Ok(2).unwrap_or_else(count), 2);
-    /// assert_eq!(Err("foo").unwrap_or_else(count), 3);
-    /// ```
-    #[inline]
-    #[stable(feature = "rust1", since = "1.0.0")]
-    pub fn unwrap_or_else<F: FnOnce(E) -> T>(self, op: F) -> T {
-        match self {
-            Ok(t) => t,
-            Err(e) => op(e),
-        }
-    }
-
-    /// Returns the contained [`Ok`] value, consuming the `self` value,
-    /// without checking that the value is not an [`Err`].
-    ///
-    /// # Safety
-    ///
-    /// Calling this method on an [`Err`] is *[undefined behavior]*.
-    ///
-    /// [undefined behavior]: https://doc.rust-lang.org/reference/behavior-considered-undefined.html
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// let x: Result<u32, &str> = Ok(2);
-    /// assert_eq!(unsafe { x.unwrap_unchecked() }, 2);
-    /// ```
-    ///
-    /// ```no_run
-    /// let x: Result<u32, &str> = Err("emergency failure");
-    /// unsafe { x.unwrap_unchecked(); } // Undefined behavior!
-    /// ```
-    #[inline]
-    #[track_caller]
-    #[stable(feature = "option_result_unwrap_unchecked", since = "1.58.0")]
-    pub unsafe fn unwrap_unchecked(self) -> T {
-        debug_assert!(self.is_ok());
-        match self {
-            Ok(t) => t,
-            // SAFETY: the safety contract must be upheld by the caller.
-            Err(_) => unsafe { hint::unreachable_unchecked() },
-        }
-    }
-
-    /// Returns the contained [`Err`] value, consuming the `self` value,
-    /// without checking that the value is not an [`Ok`].
-    ///
-    /// # Safety
-    ///
-    /// Calling this method on an [`Ok`] is *[undefined behavior]*.
-    ///
-    /// [undefined behavior]: https://doc.rust-lang.org/reference/behavior-considered-undefined.html
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// let x: Result<u32, &str> = Ok(2);
-    /// unsafe { x.unwrap_err_unchecked() }; // Undefined behavior!
-    /// ```
-    ///
-    /// ```
-    /// let x: Result<u32, &str> = Err("emergency failure");
-    /// assert_eq!(unsafe { x.unwrap_err_unchecked() }, "emergency failure");
-    /// ```
-    #[inline]
-    #[track_caller]
-    #[stable(feature = "option_result_unwrap_unchecked", since = "1.58.0")]
-    pub unsafe fn unwrap_err_unchecked(self) -> E {
-        debug_assert!(self.is_err());
-        match self {
-            // SAFETY: the safety contract must be upheld by the caller.
-            Ok(_) => unsafe { hint::unreachable_unchecked() },
-            Err(e) => e,
-        }
-    }
-}
-
-impl<T: Copy, E> Result<&T, E> {
-    /// Maps a `Result<&T, E>` to a `Result<T, E>` by copying the contents of the
-    /// `Ok` part.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// #![feature(result_copied)]
-    /// let val = 12;
-    /// let x: Result<&i32, i32> = Ok(&val);
-    /// assert_eq!(x, Ok(&12));
-    /// let copied = x.copied();
-    /// assert_eq!(copied, Ok(12));
-    /// ```
-    #[unstable(feature = "result_copied", reason = "newly added", issue = "63168")]
-    pub fn copied(self) -> Result<T, E> {
-        self.map(|&t| t)
-    }
-}
-
-impl<T: Copy, E> Result<&mut T, E> {
-    /// Maps a `Result<&mut T, E>` to a `Result<T, E>` by copying the contents of the
-    /// `Ok` part.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// #![feature(result_copied)]
-    /// let mut val = 12;
-    /// let x: Result<&mut i32, i32> = Ok(&mut val);
-    /// assert_eq!(x, Ok(&mut 12));
-    /// let copied = x.copied();
-    /// assert_eq!(copied, Ok(12));
-    /// ```
-    #[unstable(feature = "result_copied", reason = "newly added", issue = "63168")]
-    pub fn copied(self) -> Result<T, E> {
-        self.map(|&mut t| t)
-    }
-}
-
-impl<T: Clone, E> Result<&T, E> {
-    /// Maps a `Result<&T, E>` to a `Result<T, E>` by cloning the contents of the
-    /// `Ok` part.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// #![feature(result_cloned)]
-    /// let val = 12;
-    /// let x: Result<&i32, i32> = Ok(&val);
-    /// assert_eq!(x, Ok(&12));
-    /// let cloned = x.cloned();
-    /// assert_eq!(cloned, Ok(12));
-    /// ```
-    #[unstable(feature = "result_cloned", reason = "newly added", issue = "63168")]
-    pub fn cloned(self) -> Result<T, E> {
-        self.map(|t| t.clone())
-    }
-}
-
-impl<T: Clone, E> Result<&mut T, E> {
-    /// Maps a `Result<&mut T, E>` to a `Result<T, E>` by cloning the contents of the
-    /// `Ok` part.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// #![feature(result_cloned)]
-    /// let mut val = 12;
-    /// let x: Result<&mut i32, i32> = Ok(&mut val);
-    /// assert_eq!(x, Ok(&mut 12));
-    /// let cloned = x.cloned();
-    /// assert_eq!(cloned, Ok(12));
-    /// ```
-    #[unstable(feature = "result_cloned", reason = "newly added", issue = "63168")]
-    pub fn cloned(self) -> Result<T, E> {
-        self.map(|t| t.clone())
-    }
-}
-
-impl<T, E: fmt::Debug> Result<T, E> {
     /// Returns the contained [`Ok`] value, consuming the `self` value.
+    ///
+    /// Because this function may panic, its use is generally discouraged.
+    /// Instead, prefer to use pattern matching and handle the [`Err`]
+    /// case explicitly, or call [`unwrap_or`], [`unwrap_or_else`], or
+    /// [`unwrap_or_default`].
+    ///
+    /// [`unwrap_or`]: Result::unwrap_or
+    /// [`unwrap_or_else`]: Result::unwrap_or_else
+    /// [`unwrap_or_default`]: Result::unwrap_or_default
     ///
     /// # Panics
     ///
@@ -1287,16 +1149,37 @@ impl<T, E: fmt::Debug> Result<T, E> {
     ///
     /// # Examples
     ///
-    /// Basic usage:
-    ///
     /// ```should_panic
     /// let x: Result<u32, &str> = Err("emergency failure");
     /// x.expect("Testing expect"); // panics with `Testing expect: emergency failure`
     /// ```
+    ///
+    /// # Recommended Message Style
+    ///
+    /// We recommend that `expect` messages are used to describe the reason you
+    /// _expect_ the `Result` should be `Ok`.
+    ///
+    /// ```should_panic
+    /// let path = std::env::var("IMPORTANT_PATH")
+    ///     .expect("env variable `IMPORTANT_PATH` should be set by `wrapper_script.sh`");
+    /// ```
+    ///
+    /// **Hint**: If you're having trouble remembering how to phrase expect
+    /// error messages remember to focus on the word "should" as in "env
+    /// variable should be set by blah" or "the given binary should be available
+    /// and executable by the current user".
+    ///
+    /// For more detail on expect message styles and the reasoning behind our recommendation please
+    /// refer to the section on ["Common Message
+    /// Styles"](../../std/error/index.html#common-message-styles) in the
+    /// [`std::error`](../../std/error/index.html) module docs.
     #[inline]
     #[track_caller]
     #[stable(feature = "result_expect", since = "1.4.0")]
-    pub fn expect(self, msg: &str) -> T {
+    pub fn expect(self, msg: &str) -> T
+    where
+        E: fmt::Debug,
+    {
         match self {
             Ok(t) => t,
             Err(e) => unwrap_failed(msg, &e),
@@ -1306,10 +1189,15 @@ impl<T, E: fmt::Debug> Result<T, E> {
     /// Returns the contained [`Ok`] value, consuming the `self` value.
     ///
     /// Because this function may panic, its use is generally discouraged.
-    /// Instead, prefer to use pattern matching and handle the [`Err`]
-    /// case explicitly, or call [`unwrap_or`], [`unwrap_or_else`], or
-    /// [`unwrap_or_default`].
+    /// Panics are meant for unrecoverable errors, and
+    /// [may abort the entire program][panic-abort].
     ///
+    /// Instead, prefer to use [the `?` (try) operator][try-operator], or pattern matching
+    /// to handle the [`Err`] case explicitly, or call [`unwrap_or`],
+    /// [`unwrap_or_else`], or [`unwrap_or_default`].
+    ///
+    /// [panic-abort]: https://doc.rust-lang.org/book/ch09-01-unrecoverable-errors-with-panic.html
+    /// [try-operator]: https://doc.rust-lang.org/book/ch09-02-recoverable-errors-with-result.html#a-shortcut-for-propagating-errors-the--operator
     /// [`unwrap_or`]: Result::unwrap_or
     /// [`unwrap_or_else`]: Result::unwrap_or_else
     /// [`unwrap_or_default`]: Result::unwrap_or_default
@@ -1333,74 +1221,19 @@ impl<T, E: fmt::Debug> Result<T, E> {
     /// let x: Result<u32, &str> = Err("emergency failure");
     /// x.unwrap(); // panics with `emergency failure`
     /// ```
-    #[inline]
+    #[inline(always)]
     #[track_caller]
     #[stable(feature = "rust1", since = "1.0.0")]
-    pub fn unwrap(self) -> T {
+    pub fn unwrap(self) -> T
+    where
+        E: fmt::Debug,
+    {
         match self {
             Ok(t) => t,
             Err(e) => unwrap_failed("called `Result::unwrap()` on an `Err` value", &e),
         }
     }
-}
 
-impl<T: fmt::Debug, E> Result<T, E> {
-    /// Returns the contained [`Err`] value, consuming the `self` value.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the value is an [`Ok`], with a panic message including the
-    /// passed message, and the content of the [`Ok`].
-    ///
-    ///
-    /// # Examples
-    ///
-    /// Basic usage:
-    ///
-    /// ```should_panic
-    /// let x: Result<u32, &str> = Ok(10);
-    /// x.expect_err("Testing expect_err"); // panics with `Testing expect_err: 10`
-    /// ```
-    #[inline]
-    #[track_caller]
-    #[stable(feature = "result_expect_err", since = "1.17.0")]
-    pub fn expect_err(self, msg: &str) -> E {
-        match self {
-            Ok(t) => unwrap_failed(msg, &t),
-            Err(e) => e,
-        }
-    }
-
-    /// Returns the contained [`Err`] value, consuming the `self` value.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the value is an [`Ok`], with a custom panic message provided
-    /// by the [`Ok`]'s value.
-    ///
-    /// # Examples
-    ///
-    /// ```should_panic
-    /// let x: Result<u32, &str> = Ok(2);
-    /// x.unwrap_err(); // panics with `2`
-    /// ```
-    ///
-    /// ```
-    /// let x: Result<u32, &str> = Err("emergency failure");
-    /// assert_eq!(x.unwrap_err(), "emergency failure");
-    /// ```
-    #[inline]
-    #[track_caller]
-    #[stable(feature = "rust1", since = "1.0.0")]
-    pub fn unwrap_err(self) -> E {
-        match self {
-            Ok(t) => unwrap_failed("called `Result::unwrap_err()` on an `Ok` value", &t),
-            Err(e) => e,
-        }
-    }
-}
-
-impl<T: Default, E> Result<T, E> {
     /// Returns the contained [`Ok`] value or a default
     ///
     /// Consumes the `self` argument then, if [`Ok`], returns the contained
@@ -1428,16 +1261,76 @@ impl<T: Default, E> Result<T, E> {
     /// [`FromStr`]: crate::str::FromStr
     #[inline]
     #[stable(feature = "result_unwrap_or_default", since = "1.16.0")]
-    pub fn unwrap_or_default(self) -> T {
+    #[rustc_const_unstable(feature = "const_result_trait_fn", issue = "144211")]
+    pub const fn unwrap_or_default(self) -> T
+    where
+        T: [const] Default + [const] Destruct,
+        E: [const] Destruct,
+    {
         match self {
             Ok(x) => x,
             Err(_) => Default::default(),
         }
     }
-}
 
-#[unstable(feature = "unwrap_infallible", reason = "newly added", issue = "61695")]
-impl<T, E: Into<!>> Result<T, E> {
+    /// Returns the contained [`Err`] value, consuming the `self` value.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the value is an [`Ok`], with a panic message including the
+    /// passed message, and the content of the [`Ok`].
+    ///
+    ///
+    /// # Examples
+    ///
+    /// ```should_panic
+    /// let x: Result<u32, &str> = Ok(10);
+    /// x.expect_err("Testing expect_err"); // panics with `Testing expect_err: 10`
+    /// ```
+    #[inline]
+    #[track_caller]
+    #[stable(feature = "result_expect_err", since = "1.17.0")]
+    pub fn expect_err(self, msg: &str) -> E
+    where
+        T: fmt::Debug,
+    {
+        match self {
+            Ok(t) => unwrap_failed(msg, &t),
+            Err(e) => e,
+        }
+    }
+
+    /// Returns the contained [`Err`] value, consuming the `self` value.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the value is an [`Ok`], with a custom panic message provided
+    /// by the [`Ok`]'s value.
+    ///
+    /// # Examples
+    ///
+    /// ```should_panic
+    /// let x: Result<u32, &str> = Ok(2);
+    /// x.unwrap_err(); // panics with `2`
+    /// ```
+    ///
+    /// ```
+    /// let x: Result<u32, &str> = Err("emergency failure");
+    /// assert_eq!(x.unwrap_err(), "emergency failure");
+    /// ```
+    #[inline]
+    #[track_caller]
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn unwrap_err(self) -> E
+    where
+        T: fmt::Debug,
+    {
+        match self {
+            Ok(t) => unwrap_failed("called `Result::unwrap_err()` on an `Ok` value", &t),
+            Err(e) => e,
+        }
+    }
+
     /// Returns the contained [`Ok`] value, but never panics.
     ///
     /// Unlike [`unwrap`], this method is known to never panic on the
@@ -1450,8 +1343,6 @@ impl<T, E: Into<!>> Result<T, E> {
     ///
     /// # Examples
     ///
-    /// Basic usage:
-    ///
     /// ```
     /// # #![feature(never_type)]
     /// # #![feature(unwrap_infallible)]
@@ -1461,19 +1352,22 @@ impl<T, E: Into<!>> Result<T, E> {
     /// }
     ///
     /// let s: String = only_good_news().into_ok();
-    /// println!("{}", s);
+    /// println!("{s}");
     /// ```
+    #[unstable(feature = "unwrap_infallible", reason = "newly added", issue = "61695")]
     #[inline]
-    pub fn into_ok(self) -> T {
+    #[rustc_allow_const_fn_unstable(const_precise_live_drops)]
+    #[rustc_const_unstable(feature = "const_convert", issue = "143773")]
+    pub const fn into_ok(self) -> T
+    where
+        E: [const] Into<!>,
+    {
         match self {
             Ok(x) => x,
             Err(e) => e.into(),
         }
     }
-}
 
-#[unstable(feature = "unwrap_infallible", reason = "newly added", issue = "61695")]
-impl<T: Into<!>, E> Result<T, E> {
     /// Returns the contained [`Err`] value, but never panics.
     ///
     /// Unlike [`unwrap_err`], this method is known to never panic on the
@@ -1486,8 +1380,6 @@ impl<T: Into<!>, E> Result<T, E> {
     ///
     /// # Examples
     ///
-    /// Basic usage:
-    ///
     /// ```
     /// # #![feature(never_type)]
     /// # #![feature(unwrap_infallible)]
@@ -1497,62 +1389,407 @@ impl<T: Into<!>, E> Result<T, E> {
     /// }
     ///
     /// let error: String = only_bad_news().into_err();
-    /// println!("{}", error);
+    /// println!("{error}");
     /// ```
+    #[unstable(feature = "unwrap_infallible", reason = "newly added", issue = "61695")]
     #[inline]
-    pub fn into_err(self) -> E {
+    #[rustc_allow_const_fn_unstable(const_precise_live_drops)]
+    #[rustc_const_unstable(feature = "const_convert", issue = "143773")]
+    pub const fn into_err(self) -> E
+    where
+        T: [const] Into<!>,
+    {
         match self {
             Ok(x) => x.into(),
             Err(e) => e,
         }
     }
-}
 
-impl<T: Deref, E> Result<T, E> {
-    /// Converts from `Result<T, E>` (or `&Result<T, E>`) to `Result<&<T as Deref>::Target, &E>`.
+    ////////////////////////////////////////////////////////////////////////
+    // Boolean operations on the values, eager and lazy
+    /////////////////////////////////////////////////////////////////////////
+
+    /// Returns `res` if the result is [`Ok`], otherwise returns the [`Err`] value of `self`.
     ///
-    /// Coerces the [`Ok`] variant of the original [`Result`] via [`Deref`](crate::ops::Deref)
-    /// and returns the new [`Result`].
+    /// Arguments passed to `and` are eagerly evaluated; if you are passing the
+    /// result of a function call, it is recommended to use [`and_then`], which is
+    /// lazily evaluated.
+    ///
+    /// [`and_then`]: Result::and_then
     ///
     /// # Examples
     ///
     /// ```
-    /// let x: Result<String, u32> = Ok("hello".to_string());
-    /// let y: Result<&str, &u32> = Ok("hello");
-    /// assert_eq!(x.as_deref(), y);
+    /// let x: Result<u32, &str> = Ok(2);
+    /// let y: Result<&str, &str> = Err("late error");
+    /// assert_eq!(x.and(y), Err("late error"));
     ///
-    /// let x: Result<String, u32> = Err(42);
-    /// let y: Result<&str, &u32> = Err(&42);
-    /// assert_eq!(x.as_deref(), y);
+    /// let x: Result<u32, &str> = Err("early error");
+    /// let y: Result<&str, &str> = Ok("foo");
+    /// assert_eq!(x.and(y), Err("early error"));
+    ///
+    /// let x: Result<u32, &str> = Err("not a 2");
+    /// let y: Result<&str, &str> = Err("late error");
+    /// assert_eq!(x.and(y), Err("not a 2"));
+    ///
+    /// let x: Result<u32, &str> = Ok(2);
+    /// let y: Result<&str, &str> = Ok("different result type");
+    /// assert_eq!(x.and(y), Ok("different result type"));
     /// ```
-    #[stable(feature = "inner_deref", since = "1.47.0")]
-    pub fn as_deref(&self) -> Result<&T::Target, &E> {
-        self.as_ref().map(|t| t.deref())
+    #[inline]
+    #[stable(feature = "rust1", since = "1.0.0")]
+    #[rustc_const_unstable(feature = "const_result_trait_fn", issue = "144211")]
+    pub const fn and<U>(self, res: Result<U, E>) -> Result<U, E>
+    where
+        T: [const] Destruct,
+        E: [const] Destruct,
+        U: [const] Destruct,
+    {
+        match self {
+            Ok(_) => res,
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Calls `op` if the result is [`Ok`], otherwise returns the [`Err`] value of `self`.
+    ///
+    ///
+    /// This function can be used for control flow based on `Result` values.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// fn sq_then_to_string(x: u32) -> Result<String, &'static str> {
+    ///     x.checked_mul(x).map(|sq| sq.to_string()).ok_or("overflowed")
+    /// }
+    ///
+    /// assert_eq!(Ok(2).and_then(sq_then_to_string), Ok(4.to_string()));
+    /// assert_eq!(Ok(1_000_000).and_then(sq_then_to_string), Err("overflowed"));
+    /// assert_eq!(Err("not a number").and_then(sq_then_to_string), Err("not a number"));
+    /// ```
+    ///
+    /// Often used to chain fallible operations that may return [`Err`].
+    ///
+    /// ```
+    /// use std::{io::ErrorKind, path::Path};
+    ///
+    /// // Note: on Windows "/" maps to "C:\"
+    /// let root_modified_time = Path::new("/").metadata().and_then(|md| md.modified());
+    /// assert!(root_modified_time.is_ok());
+    ///
+    /// let should_fail = Path::new("/bad/path").metadata().and_then(|md| md.modified());
+    /// assert!(should_fail.is_err());
+    /// assert_eq!(should_fail.unwrap_err().kind(), ErrorKind::NotFound);
+    /// ```
+    #[inline]
+    #[stable(feature = "rust1", since = "1.0.0")]
+    #[rustc_const_unstable(feature = "const_result_trait_fn", issue = "144211")]
+    #[rustc_confusables("flat_map", "flatmap")]
+    pub const fn and_then<U, F>(self, op: F) -> Result<U, E>
+    where
+        F: [const] FnOnce(T) -> Result<U, E> + [const] Destruct,
+    {
+        match self {
+            Ok(t) => op(t),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Returns `res` if the result is [`Err`], otherwise returns the [`Ok`] value of `self`.
+    ///
+    /// Arguments passed to `or` are eagerly evaluated; if you are passing the
+    /// result of a function call, it is recommended to use [`or_else`], which is
+    /// lazily evaluated.
+    ///
+    /// [`or_else`]: Result::or_else
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let x: Result<u32, &str> = Ok(2);
+    /// let y: Result<u32, &str> = Err("late error");
+    /// assert_eq!(x.or(y), Ok(2));
+    ///
+    /// let x: Result<u32, &str> = Err("early error");
+    /// let y: Result<u32, &str> = Ok(2);
+    /// assert_eq!(x.or(y), Ok(2));
+    ///
+    /// let x: Result<u32, &str> = Err("not a 2");
+    /// let y: Result<u32, &str> = Err("late error");
+    /// assert_eq!(x.or(y), Err("late error"));
+    ///
+    /// let x: Result<u32, &str> = Ok(2);
+    /// let y: Result<u32, &str> = Ok(100);
+    /// assert_eq!(x.or(y), Ok(2));
+    /// ```
+    #[inline]
+    #[stable(feature = "rust1", since = "1.0.0")]
+    #[rustc_const_unstable(feature = "const_result_trait_fn", issue = "144211")]
+    pub const fn or<F>(self, res: Result<T, F>) -> Result<T, F>
+    where
+        T: [const] Destruct,
+        E: [const] Destruct,
+        F: [const] Destruct,
+    {
+        match self {
+            Ok(v) => Ok(v),
+            Err(_) => res,
+        }
+    }
+
+    /// Calls `op` if the result is [`Err`], otherwise returns the [`Ok`] value of `self`.
+    ///
+    /// This function can be used for control flow based on result values.
+    ///
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// fn sq(x: u32) -> Result<u32, u32> { Ok(x * x) }
+    /// fn err(x: u32) -> Result<u32, u32> { Err(x) }
+    ///
+    /// assert_eq!(Ok(2).or_else(sq).or_else(sq), Ok(2));
+    /// assert_eq!(Ok(2).or_else(err).or_else(sq), Ok(2));
+    /// assert_eq!(Err(3).or_else(sq).or_else(err), Ok(9));
+    /// assert_eq!(Err(3).or_else(err).or_else(err), Err(3));
+    /// ```
+    #[inline]
+    #[stable(feature = "rust1", since = "1.0.0")]
+    #[rustc_const_unstable(feature = "const_result_trait_fn", issue = "144211")]
+    pub const fn or_else<F, O>(self, op: O) -> Result<T, F>
+    where
+        O: [const] FnOnce(E) -> Result<T, F> + [const] Destruct,
+    {
+        match self {
+            Ok(t) => Ok(t),
+            Err(e) => op(e),
+        }
+    }
+
+    /// Returns the contained [`Ok`] value or a provided default.
+    ///
+    /// Arguments passed to `unwrap_or` are eagerly evaluated; if you are passing
+    /// the result of a function call, it is recommended to use [`unwrap_or_else`],
+    /// which is lazily evaluated.
+    ///
+    /// [`unwrap_or_else`]: Result::unwrap_or_else
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let default = 2;
+    /// let x: Result<u32, &str> = Ok(9);
+    /// assert_eq!(x.unwrap_or(default), 9);
+    ///
+    /// let x: Result<u32, &str> = Err("error");
+    /// assert_eq!(x.unwrap_or(default), default);
+    /// ```
+    #[inline]
+    #[stable(feature = "rust1", since = "1.0.0")]
+    #[rustc_const_unstable(feature = "const_result_trait_fn", issue = "144211")]
+    pub const fn unwrap_or(self, default: T) -> T
+    where
+        T: [const] Destruct,
+        E: [const] Destruct,
+    {
+        match self {
+            Ok(t) => t,
+            Err(_) => default,
+        }
+    }
+
+    /// Returns the contained [`Ok`] value or computes it from a closure.
+    ///
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// fn count(x: &str) -> usize { x.len() }
+    ///
+    /// assert_eq!(Ok(2).unwrap_or_else(count), 2);
+    /// assert_eq!(Err("foo").unwrap_or_else(count), 3);
+    /// ```
+    #[inline]
+    #[track_caller]
+    #[stable(feature = "rust1", since = "1.0.0")]
+    #[rustc_const_unstable(feature = "const_result_trait_fn", issue = "144211")]
+    pub const fn unwrap_or_else<F>(self, op: F) -> T
+    where
+        F: [const] FnOnce(E) -> T + [const] Destruct,
+    {
+        match self {
+            Ok(t) => t,
+            Err(e) => op(e),
+        }
+    }
+
+    /// Returns the contained [`Ok`] value, consuming the `self` value,
+    /// without checking that the value is not an [`Err`].
+    ///
+    /// # Safety
+    ///
+    /// Calling this method on an [`Err`] is *[undefined behavior]*.
+    ///
+    /// [undefined behavior]: https://doc.rust-lang.org/reference/behavior-considered-undefined.html
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let x: Result<u32, &str> = Ok(2);
+    /// assert_eq!(unsafe { x.unwrap_unchecked() }, 2);
+    /// ```
+    ///
+    /// ```no_run
+    /// let x: Result<u32, &str> = Err("emergency failure");
+    /// unsafe { x.unwrap_unchecked() }; // Undefined behavior!
+    /// ```
+    #[inline]
+    #[track_caller]
+    #[stable(feature = "option_result_unwrap_unchecked", since = "1.58.0")]
+    #[rustc_const_unstable(feature = "const_result_unwrap_unchecked", issue = "148714")]
+    pub const unsafe fn unwrap_unchecked(self) -> T {
+        match self {
+            Ok(t) => t,
+            Err(e) => {
+                // FIXME(const-hack): to avoid E: const Destruct bound
+                super::mem::forget(e);
+                // SAFETY: the safety contract must be upheld by the caller.
+                unsafe { hint::unreachable_unchecked() }
+            }
+        }
+    }
+
+    /// Returns the contained [`Err`] value, consuming the `self` value,
+    /// without checking that the value is not an [`Ok`].
+    ///
+    /// # Safety
+    ///
+    /// Calling this method on an [`Ok`] is *[undefined behavior]*.
+    ///
+    /// [undefined behavior]: https://doc.rust-lang.org/reference/behavior-considered-undefined.html
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// let x: Result<u32, &str> = Ok(2);
+    /// unsafe { x.unwrap_err_unchecked() }; // Undefined behavior!
+    /// ```
+    ///
+    /// ```
+    /// let x: Result<u32, &str> = Err("emergency failure");
+    /// assert_eq!(unsafe { x.unwrap_err_unchecked() }, "emergency failure");
+    /// ```
+    #[inline]
+    #[track_caller]
+    #[stable(feature = "option_result_unwrap_unchecked", since = "1.58.0")]
+    pub unsafe fn unwrap_err_unchecked(self) -> E {
+        match self {
+            // SAFETY: the safety contract must be upheld by the caller.
+            Ok(_) => unsafe { hint::unreachable_unchecked() },
+            Err(e) => e,
+        }
     }
 }
 
-impl<T: DerefMut, E> Result<T, E> {
-    /// Converts from `Result<T, E>` (or `&mut Result<T, E>`) to `Result<&mut <T as DerefMut>::Target, &mut E>`.
-    ///
-    /// Coerces the [`Ok`] variant of the original [`Result`] via [`DerefMut`](crate::ops::DerefMut)
-    /// and returns the new [`Result`].
+impl<T, E> Result<&T, E> {
+    /// Maps a `Result<&T, E>` to a `Result<T, E>` by copying the contents of the
+    /// `Ok` part.
     ///
     /// # Examples
     ///
     /// ```
-    /// let mut s = "HELLO".to_string();
-    /// let mut x: Result<String, u32> = Ok("hello".to_string());
-    /// let y: Result<&mut str, &mut u32> = Ok(&mut s);
-    /// assert_eq!(x.as_deref_mut().map(|x| { x.make_ascii_uppercase(); x }), y);
-    ///
-    /// let mut i = 42;
-    /// let mut x: Result<String, u32> = Err(42);
-    /// let y: Result<&mut str, &mut u32> = Err(&mut i);
-    /// assert_eq!(x.as_deref_mut().map(|x| { x.make_ascii_uppercase(); x }), y);
+    /// let val = 12;
+    /// let x: Result<&i32, i32> = Ok(&val);
+    /// assert_eq!(x, Ok(&12));
+    /// let copied = x.copied();
+    /// assert_eq!(copied, Ok(12));
     /// ```
-    #[stable(feature = "inner_deref", since = "1.47.0")]
-    pub fn as_deref_mut(&mut self) -> Result<&mut T::Target, &mut E> {
-        self.as_mut().map(|t| t.deref_mut())
+    #[inline]
+    #[stable(feature = "result_copied", since = "1.59.0")]
+    #[rustc_const_stable(feature = "const_result", since = "1.83.0")]
+    #[rustc_allow_const_fn_unstable(const_precise_live_drops)]
+    pub const fn copied(self) -> Result<T, E>
+    where
+        T: Copy,
+    {
+        // FIXME(const-hack): this implementation, which sidesteps using `Result::map` since it's not const
+        // ready yet, should be reverted when possible to avoid code repetition
+        match self {
+            Ok(&v) => Ok(v),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Maps a `Result<&T, E>` to a `Result<T, E>` by cloning the contents of the
+    /// `Ok` part.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let val = 12;
+    /// let x: Result<&i32, i32> = Ok(&val);
+    /// assert_eq!(x, Ok(&12));
+    /// let cloned = x.cloned();
+    /// assert_eq!(cloned, Ok(12));
+    /// ```
+    #[inline]
+    #[stable(feature = "result_cloned", since = "1.59.0")]
+    pub fn cloned(self) -> Result<T, E>
+    where
+        T: Clone,
+    {
+        self.map(|t| t.clone())
+    }
+}
+
+impl<T, E> Result<&mut T, E> {
+    /// Maps a `Result<&mut T, E>` to a `Result<T, E>` by copying the contents of the
+    /// `Ok` part.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let mut val = 12;
+    /// let x: Result<&mut i32, i32> = Ok(&mut val);
+    /// assert_eq!(x, Ok(&mut 12));
+    /// let copied = x.copied();
+    /// assert_eq!(copied, Ok(12));
+    /// ```
+    #[inline]
+    #[stable(feature = "result_copied", since = "1.59.0")]
+    #[rustc_const_stable(feature = "const_result", since = "1.83.0")]
+    #[rustc_allow_const_fn_unstable(const_precise_live_drops)]
+    pub const fn copied(self) -> Result<T, E>
+    where
+        T: Copy,
+    {
+        // FIXME(const-hack): this implementation, which sidesteps using `Result::map` since it's not const
+        // ready yet, should be reverted when possible to avoid code repetition
+        match self {
+            Ok(&mut v) => Ok(v),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Maps a `Result<&mut T, E>` to a `Result<T, E>` by cloning the contents of the
+    /// `Ok` part.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let mut val = 12;
+    /// let x: Result<&mut i32, i32> = Ok(&mut val);
+    /// assert_eq!(x, Ok(&mut 12));
+    /// let cloned = x.cloned();
+    /// assert_eq!(cloned, Ok(12));
+    /// ```
+    #[inline]
+    #[stable(feature = "result_cloned", since = "1.59.0")]
+    pub fn cloned(self) -> Result<T, E>
+    where
+        T: Clone,
+    {
+        self.map(|t| t.clone())
     }
 }
 
@@ -1574,7 +1811,8 @@ impl<T, E> Result<Option<T>, E> {
     /// ```
     #[inline]
     #[stable(feature = "transpose_result", since = "1.33.0")]
-    #[rustc_const_unstable(feature = "const_result", issue = "82814")]
+    #[rustc_const_stable(feature = "const_result", since = "1.83.0")]
+    #[rustc_allow_const_fn_unstable(const_precise_live_drops)]
     pub const fn transpose(self) -> Option<Result<T, E>> {
         match self {
             Ok(Some(x)) => Some(Ok(x)),
@@ -1589,10 +1827,7 @@ impl<T, E> Result<Result<T, E>, E> {
     ///
     /// # Examples
     ///
-    /// Basic usage:
-    ///
     /// ```
-    /// #![feature(result_flattening)]
     /// let x: Result<Result<&'static str, u32>, u32> = Ok(Ok("hello"));
     /// assert_eq!(Ok("hello"), x.flatten());
     ///
@@ -1606,70 +1841,41 @@ impl<T, E> Result<Result<T, E>, E> {
     /// Flattening only removes one level of nesting at a time:
     ///
     /// ```
-    /// #![feature(result_flattening)]
     /// let x: Result<Result<Result<&'static str, u32>, u32>, u32> = Ok(Ok(Ok("hello")));
     /// assert_eq!(Ok(Ok("hello")), x.flatten());
     /// assert_eq!(Ok("hello"), x.flatten().flatten());
     /// ```
     #[inline]
-    #[unstable(feature = "result_flattening", issue = "70142")]
-    pub fn flatten(self) -> Result<T, E> {
-        self.and_then(convert::identity)
-    }
-}
-
-impl<T> Result<T, T> {
-    /// Returns the [`Ok`] value if `self` is `Ok`, and the [`Err`] value if
-    /// `self` is `Err`.
-    ///
-    /// In other words, this function returns the value (the `T`) of a
-    /// `Result<T, T>`, regardless of whether or not that result is `Ok` or
-    /// `Err`.
-    ///
-    /// This can be useful in conjunction with APIs such as
-    /// [`Atomic*::compare_exchange`], or [`slice::binary_search`], but only in
-    /// cases where you don't care if the result was `Ok` or not.
-    ///
-    /// [`Atomic*::compare_exchange`]: crate::sync::atomic::AtomicBool::compare_exchange
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// #![feature(result_into_ok_or_err)]
-    /// let ok: Result<u32, u32> = Ok(3);
-    /// let err: Result<u32, u32> = Err(4);
-    ///
-    /// assert_eq!(ok.into_ok_or_err(), 3);
-    /// assert_eq!(err.into_ok_or_err(), 4);
-    /// ```
-    #[inline]
-    #[unstable(feature = "result_into_ok_or_err", reason = "newly added", issue = "82223")]
-    pub const fn into_ok_or_err(self) -> T {
+    #[stable(feature = "result_flattening", since = "1.89.0")]
+    #[rustc_allow_const_fn_unstable(const_precise_live_drops)]
+    #[rustc_const_stable(feature = "result_flattening", since = "1.89.0")]
+    pub const fn flatten(self) -> Result<T, E> {
+        // FIXME(const-hack): could be written with `and_then`
         match self {
-            Ok(v) => v,
-            Err(v) => v,
+            Ok(inner) => inner,
+            Err(e) => Err(e),
         }
     }
 }
 
 // This is a separate function to reduce the code size of the methods
-#[cfg(not(feature = "panic_immediate_abort"))]
+#[cfg(not(panic = "immediate-abort"))]
 #[inline(never)]
 #[cold]
 #[track_caller]
 fn unwrap_failed(msg: &str, error: &dyn fmt::Debug) -> ! {
-    panic!("{}: {:?}", msg, error)
+    panic!("{msg}: {error:?}");
 }
 
 // This is a separate function to avoid constructing a `dyn Debug`
 // that gets immediately thrown away, since vtables don't get cleaned up
 // by dead code elimination if a trait object is constructed even if it goes
 // unused
-#[cfg(feature = "panic_immediate_abort")]
+#[cfg(panic = "immediate-abort")]
 #[inline]
 #[cold]
 #[track_caller]
-fn unwrap_failed<T>(_msg: &str, _error: &T) -> ! {
+const fn unwrap_failed<T>(_msg: &str, _error: &T) -> ! {
     panic!()
 }
 
@@ -1678,7 +1884,11 @@ fn unwrap_failed<T>(_msg: &str, _error: &T) -> ! {
 /////////////////////////////////////////////////////////////////////////////
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T: Clone, E: Clone> Clone for Result<T, E> {
+impl<T, E> Clone for Result<T, E>
+where
+    T: Clone,
+    E: Clone,
+{
     #[inline]
     fn clone(&self) -> Self {
         match self {
@@ -1697,6 +1907,14 @@ impl<T: Clone, E: Clone> Clone for Result<T, E> {
     }
 }
 
+#[unstable(feature = "ergonomic_clones", issue = "132290")]
+impl<T, E> crate::clone::UseCloned for Result<T, E>
+where
+    T: crate::clone::UseCloned,
+    E: crate::clone::UseCloned,
+{
+}
+
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T, E> IntoIterator for Result<T, E> {
     type Item = T;
@@ -1707,8 +1925,6 @@ impl<T, E> IntoIterator for Result<T, E> {
     /// The iterator yields one value if the result is [`Result::Ok`], otherwise none.
     ///
     /// # Examples
-    ///
-    /// Basic usage:
     ///
     /// ```
     /// let x: Result<u32, &str> = Ok(5);
@@ -1937,15 +2153,12 @@ impl<A, E, V: FromIterator<A>> FromIterator<Result<A, E>> for Result<V, E> {
     /// so the final value of `shared` is 6 (= `3 + 2 + 1`), not 16.
     #[inline]
     fn from_iter<I: IntoIterator<Item = Result<A, E>>>(iter: I) -> Result<V, E> {
-        // FIXME(#11084): This could be replaced with Iterator::scan when this
-        // performance bug is closed.
-
-        iter::process_results(iter.into_iter(), |i| i.collect())
+        iter::try_process(iter.into_iter(), |i| i.collect())
     }
 }
 
-#[unstable(feature = "try_trait_v2", issue = "84277")]
-#[rustc_const_unstable(feature = "const_convert", issue = "88674")]
+#[unstable(feature = "try_trait_v2", issue = "84277", old_name = "try_trait")]
+#[rustc_const_unstable(feature = "const_try", issue = "74935")]
 impl<T, E> const ops::Try for Result<T, E> {
     type Output = T;
     type Residual = Result<convert::Infallible, E>;
@@ -1964,9 +2177,9 @@ impl<T, E> const ops::Try for Result<T, E> {
     }
 }
 
-#[unstable(feature = "try_trait_v2", issue = "84277")]
-#[rustc_const_unstable(feature = "const_convert", issue = "88674")]
-impl<T, E, F: ~const From<E>> const ops::FromResidual<Result<convert::Infallible, E>>
+#[unstable(feature = "try_trait_v2", issue = "84277", old_name = "try_trait")]
+#[rustc_const_unstable(feature = "const_try", issue = "74935")]
+impl<T, E, F: [const] From<E>> const ops::FromResidual<Result<convert::Infallible, E>>
     for Result<T, F>
 {
     #[inline]
@@ -1977,8 +2190,18 @@ impl<T, E, F: ~const From<E>> const ops::FromResidual<Result<convert::Infallible
         }
     }
 }
+#[diagnostic::do_not_recommend]
+#[unstable(feature = "try_trait_v2_yeet", issue = "96374")]
+#[rustc_const_unstable(feature = "const_try", issue = "74935")]
+impl<T, E, F: [const] From<E>> const ops::FromResidual<ops::Yeet<E>> for Result<T, F> {
+    #[inline]
+    fn from_residual(ops::Yeet(e): ops::Yeet<E>) -> Self {
+        Err(From::from(e))
+    }
+}
 
 #[unstable(feature = "try_trait_v2_residual", issue = "91285")]
-impl<T, E> ops::Residual<T> for Result<convert::Infallible, E> {
+#[rustc_const_unstable(feature = "const_try", issue = "74935")]
+impl<T, E> const ops::Residual<T> for Result<convert::Infallible, E> {
     type TryType = Result<T, E>;
 }

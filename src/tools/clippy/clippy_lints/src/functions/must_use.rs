@@ -1,86 +1,129 @@
-use rustc_ast::ast::Attribute;
+use hir::FnSig;
 use rustc_errors::Applicability;
-use rustc_hir::def_id::{DefIdSet, LocalDefId};
-use rustc_hir::{self as hir, def::Res, intravisit, QPath};
+use rustc_hir::def::Res;
+use rustc_hir::def_id::DefIdSet;
+use rustc_hir::{self as hir, Attribute, QPath};
+use rustc_infer::infer::TyCtxtInferExt;
 use rustc_lint::{LateContext, LintContext};
-use rustc_middle::{
-    hir::map::Map,
-    lint::in_external_macro,
-    ty::{self, Ty},
-};
-use rustc_span::{sym, Span};
+use rustc_middle::ty::{self, Ty};
+use rustc_span::{Span, sym};
 
 use clippy_utils::attrs::is_proc_macro;
 use clippy_utils::diagnostics::{span_lint_and_help, span_lint_and_then};
-use clippy_utils::source::snippet_opt;
+use clippy_utils::source::snippet_indent;
 use clippy_utils::ty::is_must_use_ty;
-use clippy_utils::{match_def_path, must_use_attr, return_ty, trait_ref_of_method};
+use clippy_utils::visitors::for_each_expr_without_closures;
+use clippy_utils::{return_ty, trait_ref_of_method};
+use rustc_hir::attrs::AttributeKind;
+use rustc_hir::find_attr;
+use rustc_span::Symbol;
+use rustc_trait_selection::error_reporting::InferCtxtErrorExt;
+
+use core::ops::ControlFlow;
 
 use super::{DOUBLE_MUST_USE, MUST_USE_CANDIDATE, MUST_USE_UNIT};
 
-pub(super) fn check_item(cx: &LateContext<'tcx>, item: &'tcx hir::Item<'_>) {
-    let attrs = cx.tcx.hir().attrs(item.hir_id());
-    let attr = must_use_attr(attrs);
-    if let hir::ItemKind::Fn(ref sig, ref _generics, ref body_id) = item.kind {
-        let is_public = cx.access_levels.is_exported(item.def_id);
+pub(super) fn check_item<'tcx>(cx: &LateContext<'tcx>, item: &'tcx hir::Item<'_>) {
+    let attrs = cx.tcx.hir_attrs(item.hir_id());
+    let attr = find_attr!(cx.tcx.hir_attrs(item.hir_id()), AttributeKind::MustUse { span, reason } => (span, reason));
+    if let hir::ItemKind::Fn {
+        ref sig,
+        body: ref body_id,
+        ident,
+        ..
+    } = item.kind
+    {
+        let is_public = cx.effective_visibilities.is_exported(item.owner_id.def_id);
         let fn_header_span = item.span.with_hi(sig.decl.output.span().hi());
-        if let Some(attr) = attr {
-            check_needless_must_use(cx, sig.decl, item.hir_id(), item.span, fn_header_span, attr);
-        } else if is_public && !is_proc_macro(cx.sess(), attrs) && !attrs.iter().any(|a| a.has_name(sym::no_mangle)) {
+        if let Some((attr_span, reason)) = attr {
+            check_needless_must_use(
+                cx,
+                sig.decl,
+                item.owner_id,
+                item.span,
+                fn_header_span,
+                *attr_span,
+                *reason,
+                attrs,
+                sig,
+            );
+        } else if is_public && !is_proc_macro(attrs) && !find_attr!(attrs, AttributeKind::NoMangle(..)) {
             check_must_use_candidate(
                 cx,
                 sig.decl,
-                cx.tcx.hir().body(*body_id),
+                cx.tcx.hir_body(*body_id),
                 item.span,
-                item.def_id,
-                item.span.with_hi(sig.decl.output.span().hi()),
+                ident.span,
+                item.owner_id,
                 "this function could have a `#[must_use]` attribute",
             );
         }
     }
 }
 
-pub(super) fn check_impl_item(cx: &LateContext<'tcx>, item: &'tcx hir::ImplItem<'_>) {
+pub(super) fn check_impl_item<'tcx>(cx: &LateContext<'tcx>, item: &'tcx hir::ImplItem<'_>) {
     if let hir::ImplItemKind::Fn(ref sig, ref body_id) = item.kind {
-        let is_public = cx.access_levels.is_exported(item.def_id);
+        let is_public = cx.effective_visibilities.is_exported(item.owner_id.def_id);
         let fn_header_span = item.span.with_hi(sig.decl.output.span().hi());
-        let attrs = cx.tcx.hir().attrs(item.hir_id());
-        let attr = must_use_attr(attrs);
-        if let Some(attr) = attr {
-            check_needless_must_use(cx, sig.decl, item.hir_id(), item.span, fn_header_span, attr);
-        } else if is_public && !is_proc_macro(cx.sess(), attrs) && trait_ref_of_method(cx, item.hir_id()).is_none() {
+        let attrs = cx.tcx.hir_attrs(item.hir_id());
+        let attr =
+            find_attr!(cx.tcx.hir_attrs(item.hir_id()), AttributeKind::MustUse { span, reason } => (span, reason));
+        if let Some((attr_span, reason)) = attr {
+            check_needless_must_use(
+                cx,
+                sig.decl,
+                item.owner_id,
+                item.span,
+                fn_header_span,
+                *attr_span,
+                *reason,
+                attrs,
+                sig,
+            );
+        } else if is_public && !is_proc_macro(attrs) && trait_ref_of_method(cx, item.owner_id).is_none() {
             check_must_use_candidate(
                 cx,
                 sig.decl,
-                cx.tcx.hir().body(*body_id),
+                cx.tcx.hir_body(*body_id),
                 item.span,
-                item.def_id,
-                item.span.with_hi(sig.decl.output.span().hi()),
+                item.ident.span,
+                item.owner_id,
                 "this method could have a `#[must_use]` attribute",
             );
         }
     }
 }
 
-pub(super) fn check_trait_item(cx: &LateContext<'tcx>, item: &'tcx hir::TraitItem<'_>) {
+pub(super) fn check_trait_item<'tcx>(cx: &LateContext<'tcx>, item: &'tcx hir::TraitItem<'_>) {
     if let hir::TraitItemKind::Fn(ref sig, ref eid) = item.kind {
-        let is_public = cx.access_levels.is_exported(item.def_id);
+        let is_public = cx.effective_visibilities.is_exported(item.owner_id.def_id);
         let fn_header_span = item.span.with_hi(sig.decl.output.span().hi());
 
-        let attrs = cx.tcx.hir().attrs(item.hir_id());
-        let attr = must_use_attr(attrs);
-        if let Some(attr) = attr {
-            check_needless_must_use(cx, sig.decl, item.hir_id(), item.span, fn_header_span, attr);
+        let attrs = cx.tcx.hir_attrs(item.hir_id());
+        let attr =
+            find_attr!(cx.tcx.hir_attrs(item.hir_id()), AttributeKind::MustUse { span, reason } => (span, reason));
+        if let Some((attr_span, reason)) = attr {
+            check_needless_must_use(
+                cx,
+                sig.decl,
+                item.owner_id,
+                item.span,
+                fn_header_span,
+                *attr_span,
+                *reason,
+                attrs,
+                sig,
+            );
         } else if let hir::TraitFn::Provided(eid) = *eid {
-            let body = cx.tcx.hir().body(eid);
-            if attr.is_none() && is_public && !is_proc_macro(cx.sess(), attrs) {
+            let body = cx.tcx.hir_body(eid);
+            if attr.is_none() && is_public && !is_proc_macro(attrs) {
                 check_must_use_candidate(
                     cx,
                     sig.decl,
                     body,
                     item.span,
-                    item.def_id,
-                    item.span.with_hi(sig.decl.output.span().hi()),
+                    item.ident.span,
+                    item.owner_id,
                     "this method could have a `#[must_use]` attribute",
                 );
             }
@@ -88,40 +131,66 @@ pub(super) fn check_trait_item(cx: &LateContext<'tcx>, item: &'tcx hir::TraitIte
     }
 }
 
+// FIXME: needs to be an EARLY LINT. all attribute lints should be
+#[expect(clippy::too_many_arguments)]
 fn check_needless_must_use(
     cx: &LateContext<'_>,
     decl: &hir::FnDecl<'_>,
-    item_id: hir::HirId,
+    item_id: hir::OwnerId,
     item_span: Span,
     fn_header_span: Span,
-    attr: &Attribute,
+    attr_span: Span,
+    reason: Option<Symbol>,
+    attrs: &[Attribute],
+    sig: &FnSig<'_>,
 ) {
-    if in_external_macro(cx.sess(), item_span) {
+    if item_span.in_external_macro(cx.sess().source_map()) {
         return;
     }
     if returns_unit(decl) {
-        span_lint_and_then(
-            cx,
-            MUST_USE_UNIT,
-            fn_header_span,
-            "this unit-returning function has a `#[must_use]` attribute",
-            |diag| {
-                diag.span_suggestion(
-                    attr.span,
-                    "remove the attribute",
-                    "".into(),
-                    Applicability::MachineApplicable,
-                );
-            },
-        );
-    } else if attr.value_str().is_none() && is_must_use_ty(cx, return_ty(cx, item_id)) {
+        if attrs.len() == 1 {
+            span_lint_and_then(
+                cx,
+                MUST_USE_UNIT,
+                fn_header_span,
+                "this unit-returning function has a `#[must_use]` attribute",
+                |diag| {
+                    diag.span_suggestion(attr_span, "remove the attribute", "", Applicability::MachineApplicable);
+                },
+            );
+        } else {
+            // When there are multiple attributes, it is not sufficient to simply make `must_use` empty, see
+            // issue #12320.
+            // FIXME(jdonszelmann): this used to give a machine-applicable fix. However, it was super fragile,
+            // honestly looked incorrect, and is a little hard to support for a little bit now. Some day this
+            // could be re-added.
+            span_lint_and_help(
+                cx,
+                MUST_USE_UNIT,
+                fn_header_span,
+                "this unit-returning function has a `#[must_use]` attribute",
+                Some(attr_span),
+                "remove `must_use`",
+            );
+        }
+    } else if reason.is_none() && is_must_use_ty(cx, return_ty(cx, item_id)) {
+        // Ignore async functions unless Future::Output type is a must_use type
+        if sig.header.is_async() {
+            let infcx = cx.tcx.infer_ctxt().build(cx.typing_mode());
+            if let Some(future_ty) = infcx.err_ctxt().get_impl_future_output_ty(return_ty(cx, item_id))
+                && !is_must_use_ty(cx, future_ty)
+            {
+                return;
+            }
+        }
+
         span_lint_and_help(
             cx,
             DOUBLE_MUST_USE,
             fn_header_span,
-            "this function has an empty `#[must_use]` attribute, but returns a type already marked as `#[must_use]`",
+            "this function has a `#[must_use]` attribute with no message, but returns a type already marked as `#[must_use]`",
             None,
-            "either add some descriptive text or remove the attribute",
+            "either add some descriptive message or remove the attribute",
         );
     }
 }
@@ -131,28 +200,28 @@ fn check_must_use_candidate<'tcx>(
     decl: &'tcx hir::FnDecl<'_>,
     body: &'tcx hir::Body<'_>,
     item_span: Span,
-    item_id: LocalDefId,
-    fn_span: Span,
-    msg: &str,
+    ident_span: Span,
+    item_id: hir::OwnerId,
+    msg: &'static str,
 ) {
     if has_mutable_arg(cx, body)
         || mutates_static(cx, body)
-        || in_external_macro(cx.sess(), item_span)
+        || item_span.in_external_macro(cx.sess().source_map())
         || returns_unit(decl)
-        || !cx.access_levels.is_exported(item_id)
-        || is_must_use_ty(cx, return_ty(cx, cx.tcx.hir().local_def_id_to_hir_id(item_id)))
+        || !cx.effective_visibilities.is_exported(item_id.def_id)
+        || is_must_use_ty(cx, return_ty(cx, item_id))
+        || item_span.from_expansion()
     {
         return;
     }
-    span_lint_and_then(cx, MUST_USE_CANDIDATE, fn_span, msg, |diag| {
-        if let Some(snippet) = snippet_opt(cx, fn_span) {
-            diag.span_suggestion(
-                fn_span,
-                "add the attribute",
-                format!("#[must_use] {}", snippet),
-                Applicability::MachineApplicable,
-            );
-        }
+    span_lint_and_then(cx, MUST_USE_CANDIDATE, ident_span, msg, |diag| {
+        let indent = snippet_indent(cx, item_span).unwrap_or_default();
+        diag.span_suggestion(
+            item_span.shrink_to_lo(),
+            "add the attribute",
+            format!("#[must_use] \n{indent}"),
+            Applicability::MachineApplicable,
+        );
     });
 }
 
@@ -176,77 +245,28 @@ fn is_mutable_pat(cx: &LateContext<'_>, pat: &hir::Pat<'_>, tys: &mut DefIdSet) 
     if let hir::PatKind::Wild = pat.kind {
         return false; // ignore `_` patterns
     }
-    if cx.tcx.has_typeck_results(pat.hir_id.owner.to_def_id()) {
-        is_mutable_ty(cx, cx.tcx.typeck(pat.hir_id.owner).pat_ty(pat), pat.span, tys)
+    if cx.tcx.has_typeck_results(pat.hir_id.owner.def_id) {
+        is_mutable_ty(cx, cx.tcx.typeck(pat.hir_id.owner.def_id).pat_ty(pat), tys)
     } else {
         false
     }
 }
 
-static KNOWN_WRAPPER_TYS: &[&[&str]] = &[&["alloc", "rc", "Rc"], &["std", "sync", "Arc"]];
-
-fn is_mutable_ty<'tcx>(cx: &LateContext<'tcx>, ty: Ty<'tcx>, span: Span, tys: &mut DefIdSet) -> bool {
+fn is_mutable_ty<'tcx>(cx: &LateContext<'tcx>, ty: Ty<'tcx>, tys: &mut DefIdSet) -> bool {
     match *ty.kind() {
         // primitive types are never mutable
         ty::Bool | ty::Char | ty::Int(_) | ty::Uint(_) | ty::Float(_) | ty::Str => false,
-        ty::Adt(adt, substs) => {
-            tys.insert(adt.did) && !ty.is_freeze(cx.tcx.at(span), cx.param_env)
-                || KNOWN_WRAPPER_TYS.iter().any(|path| match_def_path(cx, adt.did, path))
-                    && substs.types().any(|ty| is_mutable_ty(cx, ty, span, tys))
+        ty::Adt(adt, args) => {
+            tys.insert(adt.did()) && !ty.is_freeze(cx.tcx, cx.typing_env())
+                || matches!(cx.tcx.get_diagnostic_name(adt.did()), Some(sym::Rc | sym::Arc))
+                    && args.types().any(|ty| is_mutable_ty(cx, ty, tys))
         },
-        ty::Tuple(substs) => substs.types().any(|ty| is_mutable_ty(cx, ty, span, tys)),
-        ty::Array(ty, _) | ty::Slice(ty) => is_mutable_ty(cx, ty, span, tys),
-        ty::RawPtr(ty::TypeAndMut { ty, mutbl }) | ty::Ref(_, ty, mutbl) => {
-            mutbl == hir::Mutability::Mut || is_mutable_ty(cx, ty, span, tys)
-        },
+        ty::Tuple(args) => args.iter().any(|ty| is_mutable_ty(cx, ty, tys)),
+        ty::Array(ty, _) | ty::Slice(ty) => is_mutable_ty(cx, ty, tys),
+        ty::RawPtr(ty, mutbl) | ty::Ref(_, ty, mutbl) => mutbl == hir::Mutability::Mut || is_mutable_ty(cx, ty, tys),
         // calling something constitutes a side effect, so return true on all callables
         // also never calls need not be used, so return true for them, too
         _ => true,
-    }
-}
-
-struct StaticMutVisitor<'a, 'tcx> {
-    cx: &'a LateContext<'tcx>,
-    mutates_static: bool,
-}
-
-impl<'a, 'tcx> intravisit::Visitor<'tcx> for StaticMutVisitor<'a, 'tcx> {
-    type Map = Map<'tcx>;
-
-    fn visit_expr(&mut self, expr: &'tcx hir::Expr<'_>) {
-        use hir::ExprKind::{AddrOf, Assign, AssignOp, Call, MethodCall};
-
-        if self.mutates_static {
-            return;
-        }
-        match expr.kind {
-            Call(_, args) | MethodCall(_, _, args, _) => {
-                let mut tys = DefIdSet::default();
-                for arg in args {
-                    if self.cx.tcx.has_typeck_results(arg.hir_id.owner.to_def_id())
-                        && is_mutable_ty(
-                            self.cx,
-                            self.cx.tcx.typeck(arg.hir_id.owner).expr_ty(arg),
-                            arg.span,
-                            &mut tys,
-                        )
-                        && is_mutated_static(arg)
-                    {
-                        self.mutates_static = true;
-                        return;
-                    }
-                    tys.clear();
-                }
-            },
-            Assign(target, ..) | AssignOp(_, target, _) | AddrOf(_, hir::Mutability::Mut, target) => {
-                self.mutates_static |= is_mutated_static(target);
-            },
-            _ => {},
-        }
-    }
-
-    fn nested_visit_map(&mut self) -> intravisit::NestedVisitorMap<Self::Map> {
-        intravisit::NestedVisitorMap::None
     }
 }
 
@@ -256,16 +276,49 @@ fn is_mutated_static(e: &hir::Expr<'_>) -> bool {
     match e.kind {
         Path(QPath::Resolved(_, path)) => !matches!(path.res, Res::Local(_)),
         Path(_) => true,
-        Field(inner, _) | Index(inner, _) => is_mutated_static(inner),
+        Field(inner, _) | Index(inner, _, _) => is_mutated_static(inner),
         _ => false,
     }
 }
 
 fn mutates_static<'tcx>(cx: &LateContext<'tcx>, body: &'tcx hir::Body<'_>) -> bool {
-    let mut v = StaticMutVisitor {
-        cx,
-        mutates_static: false,
-    };
-    intravisit::walk_expr(&mut v, &body.value);
-    v.mutates_static
+    for_each_expr_without_closures(body.value, |e| {
+        use hir::ExprKind::{AddrOf, Assign, AssignOp, Call, MethodCall};
+
+        match e.kind {
+            Call(_, args) => {
+                let mut tys = DefIdSet::default();
+                for arg in args {
+                    if cx.tcx.has_typeck_results(arg.hir_id.owner.def_id)
+                        && is_mutable_ty(cx, cx.tcx.typeck(arg.hir_id.owner.def_id).expr_ty(arg), &mut tys)
+                        && is_mutated_static(arg)
+                    {
+                        return ControlFlow::Break(());
+                    }
+                    tys.clear();
+                }
+                ControlFlow::Continue(())
+            },
+            MethodCall(_, receiver, args, _) => {
+                let mut tys = DefIdSet::default();
+                for arg in std::iter::once(receiver).chain(args.iter()) {
+                    if cx.tcx.has_typeck_results(arg.hir_id.owner.def_id)
+                        && is_mutable_ty(cx, cx.tcx.typeck(arg.hir_id.owner.def_id).expr_ty(arg), &mut tys)
+                        && is_mutated_static(arg)
+                    {
+                        return ControlFlow::Break(());
+                    }
+                    tys.clear();
+                }
+                ControlFlow::Continue(())
+            },
+            Assign(target, ..) | AssignOp(_, target, _) | AddrOf(_, hir::Mutability::Mut, target)
+                if is_mutated_static(target) =>
+            {
+                ControlFlow::Break(())
+            },
+            _ => ControlFlow::Continue(()),
+        }
+    })
+    .is_some()
 }

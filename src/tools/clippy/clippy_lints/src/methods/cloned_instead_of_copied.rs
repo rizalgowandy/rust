@@ -1,25 +1,27 @@
 use clippy_utils::diagnostics::span_lint_and_sugg;
+use clippy_utils::msrvs::{self, Msrv};
+use clippy_utils::res::{MaybeDef, MaybeTypeckRes};
 use clippy_utils::ty::{get_iterator_item_ty, is_copy};
-use clippy_utils::{is_trait_method, meets_msrv, msrvs};
 use rustc_errors::Applicability;
 use rustc_hir::Expr;
 use rustc_lint::LateContext;
 use rustc_middle::ty;
-use rustc_semver::RustcVersion;
-use rustc_span::{sym, Span};
+use rustc_span::{Span, sym};
 
 use super::CLONED_INSTEAD_OF_COPIED;
 
-pub fn check(cx: &LateContext<'_>, expr: &Expr<'_>, recv: &Expr<'_>, span: Span, msrv: Option<&RustcVersion>) {
+pub fn check(cx: &LateContext<'_>, expr: &Expr<'_>, recv: &Expr<'_>, span: Span, msrv: Msrv) {
     let recv_ty = cx.typeck_results().expr_ty_adjusted(recv);
     let inner_ty = match recv_ty.kind() {
         // `Option<T>` -> `T`
         ty::Adt(adt, subst)
-            if cx.tcx.is_diagnostic_item(sym::Option, adt.did) && meets_msrv(msrv, &msrvs::OPTION_COPIED) =>
+            if cx.tcx.is_diagnostic_item(sym::Option, adt.did()) && msrv.meets(cx, msrvs::OPTION_COPIED) =>
         {
             subst.type_at(0)
         },
-        _ if is_trait_method(cx, expr, sym::Iterator) && meets_msrv(msrv, &msrvs::ITERATOR_COPIED) => {
+        _ if cx.ty_based_def(expr).opt_parent(cx).is_diag_item(cx, sym::Iterator)
+            && msrv.meets(cx, msrvs::ITERATOR_COPIED) =>
+        {
             match get_iterator_item_ty(cx, recv_ty) {
                 // <T as Iterator>::Item
                 Some(ty) => ty,
@@ -30,9 +32,9 @@ pub fn check(cx: &LateContext<'_>, expr: &Expr<'_>, recv: &Expr<'_>, span: Span,
     };
     match inner_ty.kind() {
         // &T where T: Copy
-        ty::Ref(_, ty, _) if is_copy(cx, ty) => {},
+        ty::Ref(_, ty, _) if is_copy(cx, *ty) => {},
         _ => return,
-    };
+    }
     span_lint_and_sugg(
         cx,
         CLONED_INSTEAD_OF_COPIED,

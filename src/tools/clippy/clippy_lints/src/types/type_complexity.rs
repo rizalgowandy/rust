@@ -1,17 +1,16 @@
 use clippy_utils::diagnostics::span_lint;
-use rustc_hir as hir;
-use rustc_hir::intravisit::{walk_inf, walk_ty, NestedVisitorMap, Visitor};
-use rustc_hir::{GenericParamKind, TyKind};
+use rustc_abi::ExternAbi;
+use rustc_hir::intravisit::{InferKind, Visitor, VisitorExt, walk_ty};
+use rustc_hir::{self as hir, AmbigArg, GenericParamKind, TyKind};
 use rustc_lint::LateContext;
-use rustc_middle::hir::map::Map;
-use rustc_target::spec::abi::Abi;
+use rustc_span::Span;
 
 use super::TYPE_COMPLEXITY;
 
 pub(super) fn check(cx: &LateContext<'_>, ty: &hir::Ty<'_>, type_complexity_threshold: u64) -> bool {
     let score = {
         let mut visitor = TypeComplexityVisitor { score: 0, nest: 1 };
-        visitor.visit_ty(ty);
+        visitor.visit_ty_unambig(ty);
         visitor.score
     };
 
@@ -37,30 +36,28 @@ struct TypeComplexityVisitor {
 }
 
 impl<'tcx> Visitor<'tcx> for TypeComplexityVisitor {
-    type Map = Map<'tcx>;
-
-    fn visit_infer(&mut self, inf: &'tcx hir::InferArg) {
+    fn visit_infer(&mut self, inf_id: hir::HirId, _inf_span: Span, _kind: InferKind<'tcx>) -> Self::Result {
         self.score += 1;
-        walk_inf(self, inf);
+        self.visit_id(inf_id);
     }
 
-    fn visit_ty(&mut self, ty: &'tcx hir::Ty<'_>) {
+    fn visit_ty(&mut self, ty: &'tcx hir::Ty<'_, AmbigArg>) {
         let (add_score, sub_nest) = match ty.kind {
-            // _, &x and *x have only small overhead; don't mess with nesting level
-            TyKind::Infer | TyKind::Ptr(..) | TyKind::Rptr(..) => (1, 0),
+            // &x and *x have only small overhead; don't mess with nesting level
+            TyKind::Ptr(..) | TyKind::Ref(..) => (1, 0),
 
             // the "normal" components of a type: named types, arrays/tuples
             TyKind::Path(..) | TyKind::Slice(..) | TyKind::Tup(..) | TyKind::Array(..) => (10 * self.nest, 1),
 
             // function types bring a lot of overhead
-            TyKind::BareFn(bare) if bare.abi == Abi::Rust => (50 * self.nest, 1),
+            TyKind::FnPtr(fn_ptr) if fn_ptr.abi == ExternAbi::Rust => (50 * self.nest, 1),
 
-            TyKind::TraitObject(param_bounds, _, _) => {
+            TyKind::TraitObject(param_bounds, _) => {
                 let has_lifetime_parameters = param_bounds.iter().any(|bound| {
                     bound
                         .bound_generic_params
                         .iter()
-                        .any(|gen| matches!(gen.kind, GenericParamKind::Lifetime { .. }))
+                        .any(|param| matches!(param.kind, GenericParamKind::Lifetime { .. }))
                 });
                 if has_lifetime_parameters {
                     // complex trait bounds like A<'a, 'b>
@@ -77,8 +74,5 @@ impl<'tcx> Visitor<'tcx> for TypeComplexityVisitor {
         self.nest += sub_nest;
         walk_ty(self, ty);
         self.nest -= sub_nest;
-    }
-    fn nested_visit_map(&mut self) -> NestedVisitorMap<Self::Map> {
-        NestedVisitorMap::None
     }
 }

@@ -1,126 +1,129 @@
-use std::mem;
+use std::{mem, slice};
 
-use rustc_ast::attr;
-use rustc_ast::ptr::P;
 use rustc_ast::visit::{self, Visitor};
-use rustc_ast::{self as ast, NodeId};
+use rustc_ast::{self as ast, HasNodeId, NodeId, attr};
 use rustc_ast_pretty::pprust;
-use rustc_expand::base::{parse_macro_name_and_helper_attrs, ExtCtxt, ResolverExpand};
+use rustc_attr_parsing::AttributeParser;
+use rustc_errors::DiagCtxtHandle;
+use rustc_expand::base::{ExtCtxt, ResolverExpand};
 use rustc_expand::expand::{AstFragment, ExpansionConfig};
+use rustc_feature::Features;
+use rustc_hir::attrs::AttributeKind;
 use rustc_session::Session;
 use rustc_span::hygiene::AstPass;
 use rustc_span::source_map::SourceMap;
-use rustc_span::symbol::{kw, sym, Ident, Symbol};
-use rustc_span::{Span, DUMMY_SP};
+use rustc_span::{DUMMY_SP, Ident, Span, Symbol, kw, sym};
 use smallvec::smallvec;
+use thin_vec::{ThinVec, thin_vec};
+
+use crate::errors;
 
 struct ProcMacroDerive {
     id: NodeId,
     trait_name: Symbol,
-    function_name: Ident,
+    function_ident: Ident,
     span: Span,
-    attrs: Vec<Symbol>,
-}
-
-enum ProcMacroDefType {
-    Attr,
-    Bang,
+    attrs: ThinVec<Symbol>,
 }
 
 struct ProcMacroDef {
     id: NodeId,
-    function_name: Ident,
+    function_ident: Ident,
     span: Span,
-    def_type: ProcMacroDefType,
 }
 
 enum ProcMacro {
     Derive(ProcMacroDerive),
-    Def(ProcMacroDef),
+    Attr(ProcMacroDef),
+    Bang(ProcMacroDef),
 }
 
 struct CollectProcMacros<'a> {
-    sess: &'a Session,
     macros: Vec<ProcMacro>,
     in_root: bool,
-    handler: &'a rustc_errors::Handler,
+    dcx: DiagCtxtHandle<'a>,
+    session: &'a Session,
     source_map: &'a SourceMap,
     is_proc_macro_crate: bool,
     is_test_crate: bool,
 }
 
 pub fn inject(
+    krate: &mut ast::Crate,
     sess: &Session,
+    features: &Features,
     resolver: &mut dyn ResolverExpand,
-    mut krate: ast::Crate,
     is_proc_macro_crate: bool,
     has_proc_macro_decls: bool,
     is_test_crate: bool,
-    num_crate_types: usize,
-    handler: &rustc_errors::Handler,
-) -> ast::Crate {
-    let ecfg = ExpansionConfig::default("proc_macro".to_string());
+    dcx: DiagCtxtHandle<'_>,
+) {
+    let ecfg = ExpansionConfig::default(sym::proc_macro, features);
     let mut cx = ExtCtxt::new(sess, ecfg, resolver, None);
 
     let mut collect = CollectProcMacros {
-        sess,
         macros: Vec::new(),
         in_root: true,
-        handler,
+        dcx,
+        session: sess,
         source_map: sess.source_map(),
         is_proc_macro_crate,
         is_test_crate,
     };
 
     if has_proc_macro_decls || is_proc_macro_crate {
-        visit::walk_crate(&mut collect, &krate);
+        visit::walk_crate(&mut collect, krate);
     }
     let macros = collect.macros;
 
     if !is_proc_macro_crate {
-        return krate;
-    }
-
-    if num_crate_types > 1 {
-        handler.err("cannot mix `proc-macro` crate type with others");
+        return;
     }
 
     if is_test_crate {
-        return krate;
+        return;
     }
 
     let decls = mk_decls(&mut cx, &macros);
     krate.items.push(decls);
-
-    krate
 }
 
 impl<'a> CollectProcMacros<'a> {
     fn check_not_pub_in_root(&self, vis: &ast::Visibility, sp: Span) {
         if self.is_proc_macro_crate && self.in_root && vis.kind.is_pub() {
-            self.handler.span_err(
-                sp,
-                "`proc-macro` crate types currently cannot export any items other \
-                    than functions tagged with `#[proc_macro]`, `#[proc_macro_derive]`, \
-                    or `#[proc_macro_attribute]`",
-            );
+            self.dcx.emit_err(errors::ProcMacro { span: sp });
         }
     }
 
-    fn collect_custom_derive(&mut self, item: &'a ast::Item, attr: &'a ast::Attribute) {
-        let (trait_name, proc_attrs) =
-            match parse_macro_name_and_helper_attrs(self.handler, attr, "derive") {
-                Some(name_and_attrs) => name_and_attrs,
-                None => return,
-            };
+    fn collect_custom_derive(
+        &mut self,
+        item: &'a ast::Item,
+        function_ident: Ident,
+        attr: &'a ast::Attribute,
+    ) {
+        let Some(rustc_hir::Attribute::Parsed(AttributeKind::ProcMacroDerive {
+            trait_name,
+            helper_attrs,
+            ..
+        })) = AttributeParser::parse_limited(
+            self.session,
+            slice::from_ref(attr),
+            sym::proc_macro_derive,
+            item.span,
+            item.node_id(),
+            None,
+        )
+        else {
+            return;
+        };
 
         if self.in_root && item.vis.kind.is_pub() {
             self.macros.push(ProcMacro::Derive(ProcMacroDerive {
                 id: item.id,
                 span: item.span,
                 trait_name,
-                function_name: item.ident,
-                attrs: proc_attrs,
+                function_ident,
+                attrs: helper_attrs,
             }));
         } else {
             let msg = if !self.in_root {
@@ -129,17 +132,16 @@ impl<'a> CollectProcMacros<'a> {
             } else {
                 "functions tagged with `#[proc_macro_derive]` must be `pub`"
             };
-            self.handler.span_err(self.source_map.guess_head_span(item.span), msg);
+            self.dcx.span_err(self.source_map.guess_head_span(item.span), msg);
         }
     }
 
-    fn collect_attr_proc_macro(&mut self, item: &'a ast::Item) {
+    fn collect_attr_proc_macro(&mut self, item: &'a ast::Item, function_ident: Ident) {
         if self.in_root && item.vis.kind.is_pub() {
-            self.macros.push(ProcMacro::Def(ProcMacroDef {
+            self.macros.push(ProcMacro::Attr(ProcMacroDef {
                 id: item.id,
                 span: item.span,
-                function_name: item.ident,
-                def_type: ProcMacroDefType::Attr,
+                function_ident,
             }));
         } else {
             let msg = if !self.in_root {
@@ -148,17 +150,16 @@ impl<'a> CollectProcMacros<'a> {
             } else {
                 "functions tagged with `#[proc_macro_attribute]` must be `pub`"
             };
-            self.handler.span_err(self.source_map.guess_head_span(item.span), msg);
+            self.dcx.span_err(self.source_map.guess_head_span(item.span), msg);
         }
     }
 
-    fn collect_bang_proc_macro(&mut self, item: &'a ast::Item) {
+    fn collect_bang_proc_macro(&mut self, item: &'a ast::Item, function_ident: Ident) {
         if self.in_root && item.vis.kind.is_pub() {
-            self.macros.push(ProcMacro::Def(ProcMacroDef {
+            self.macros.push(ProcMacro::Bang(ProcMacroDef {
                 id: item.id,
                 span: item.span,
-                function_name: item.ident,
-                def_type: ProcMacroDefType::Bang,
+                function_ident,
             }));
         } else {
             let msg = if !self.in_root {
@@ -167,7 +168,7 @@ impl<'a> CollectProcMacros<'a> {
             } else {
                 "functions tagged with `#[proc_macro]` must be `pub`"
             };
-            self.handler.span_err(self.source_map.guess_head_span(item.span), msg);
+            self.dcx.span_err(self.source_map.guess_head_span(item.span), msg);
         }
     }
 }
@@ -175,23 +176,17 @@ impl<'a> CollectProcMacros<'a> {
 impl<'a> Visitor<'a> for CollectProcMacros<'a> {
     fn visit_item(&mut self, item: &'a ast::Item) {
         if let ast::ItemKind::MacroDef(..) = item.kind {
-            if self.is_proc_macro_crate && self.sess.contains_name(&item.attrs, sym::macro_export) {
-                let msg =
-                    "cannot export macro_rules! macros from a `proc-macro` crate type currently";
-                self.handler.span_err(self.source_map.guess_head_span(item.span), msg);
+            if self.is_proc_macro_crate && attr::contains_name(&item.attrs, sym::macro_export) {
+                self.dcx.emit_err(errors::ExportMacroRules {
+                    span: self.source_map.guess_head_span(item.span),
+                });
             }
         }
-
-        // First up, make sure we're checking a bare function. If we're not then
-        // we're just not interested in this item.
-        //
-        // If we find one, try to locate a `#[proc_macro_derive]` attribute on it.
-        let is_fn = matches!(item.kind, ast::ItemKind::Fn(..));
 
         let mut found_attr: Option<&'a ast::Attribute> = None;
 
         for attr in &item.attrs {
-            if self.sess.is_proc_macro_attr(&attr) {
+            if attr.is_proc_macro_attr() {
                 if let Some(prev_attr) = found_attr {
                     let prev_item = prev_attr.get_normal_item();
                     let item = attr.get_normal_item();
@@ -200,8 +195,7 @@ impl<'a> Visitor<'a> for CollectProcMacros<'a> {
                         == prev_item.path.segments[0].ident.name
                     {
                         format!(
-                            "only one `#[{}]` attribute is allowed on any given function",
-                            path_str,
+                            "only one `#[{path_str}]` attribute is allowed on any given function",
                         )
                     } else {
                         format!(
@@ -212,9 +206,9 @@ impl<'a> Visitor<'a> for CollectProcMacros<'a> {
                         )
                     };
 
-                    self.handler
-                        .struct_span_err(attr.span, &msg)
-                        .span_label(prev_attr.span, "previous attribute here")
+                    self.dcx
+                        .struct_span_err(attr.span, msg)
+                        .with_span_label(prev_attr.span, "previous attribute here")
                         .emit();
 
                     return;
@@ -224,47 +218,44 @@ impl<'a> Visitor<'a> for CollectProcMacros<'a> {
             }
         }
 
-        let attr = match found_attr {
-            None => {
-                self.check_not_pub_in_root(&item.vis, self.source_map.guess_head_span(item.span));
-                let prev_in_root = mem::replace(&mut self.in_root, false);
-                visit::walk_item(self, item);
-                self.in_root = prev_in_root;
-                return;
-            }
-            Some(attr) => attr,
+        let Some(attr) = found_attr else {
+            self.check_not_pub_in_root(&item.vis, self.source_map.guess_head_span(item.span));
+            let prev_in_root = mem::replace(&mut self.in_root, false);
+            visit::walk_item(self, item);
+            self.in_root = prev_in_root;
+            return;
         };
 
-        if !is_fn {
-            let msg = format!(
-                "the `#[{}]` attribute may only be used on bare functions",
-                pprust::path_to_string(&attr.get_normal_item().path),
-            );
-
-            self.handler.span_err(attr.span, &msg);
+        // Make sure we're checking a bare function. If we're not then we're
+        // just not interested any further in this item.
+        let fn_ident = if let ast::ItemKind::Fn(fn_) = &item.kind {
+            fn_.ident
+        } else {
+            // Error handled by general target checking logic
             return;
-        }
+        };
 
         if self.is_test_crate {
             return;
         }
 
         if !self.is_proc_macro_crate {
-            let msg = format!(
-                "the `#[{}]` attribute is only usable with crates of the `proc-macro` crate type",
-                pprust::path_to_string(&attr.get_normal_item().path),
-            );
-
-            self.handler.span_err(attr.span, &msg);
+            self.dcx
+                .create_err(errors::AttributeOnlyUsableWithCrateType {
+                    span: attr.span,
+                    path: &pprust::path_to_string(&attr.get_normal_item().path),
+                })
+                .emit();
             return;
         }
 
+        // Try to locate a `#[proc_macro_derive]` attribute.
         if attr.has_name(sym::proc_macro_derive) {
-            self.collect_custom_derive(item, attr);
+            self.collect_custom_derive(item, fn_ident, attr);
         } else if attr.has_name(sym::proc_macro_attribute) {
-            self.collect_attr_proc_macro(item);
+            self.collect_attr_proc_macro(item, fn_ident);
         } else if attr.has_name(sym::proc_macro) {
-            self.collect_bang_proc_macro(item);
+            self.collect_bang_proc_macro(item, fn_ident);
         };
 
         let prev_in_root = mem::replace(&mut self.in_root, false);
@@ -281,6 +272,7 @@ impl<'a> Visitor<'a> for CollectProcMacros<'a> {
 //          use proc_macro::bridge::client::ProcMacro;
 //
 //          #[rustc_proc_macro_decls]
+//          #[used]
 //          #[allow(deprecated)]
 //          static DECLS: &[ProcMacro] = &[
 //              ProcMacro::custom_derive($name_trait1, &[], ::$name1);
@@ -288,7 +280,7 @@ impl<'a> Visitor<'a> for CollectProcMacros<'a> {
 //              // ...
 //          ];
 //      }
-fn mk_decls(cx: &mut ExtCtxt<'_>, macros: &[ProcMacro]) -> P<ast::Item> {
+fn mk_decls(cx: &mut ExtCtxt<'_>, macros: &[ProcMacro]) -> Box<ast::Item> {
     let expn_id = cx.resolver.expansion_for_ast_pass(
         DUMMY_SP,
         AstPass::ProcMacroHarness,
@@ -298,7 +290,7 @@ fn mk_decls(cx: &mut ExtCtxt<'_>, macros: &[ProcMacro]) -> P<ast::Item> {
     let span = DUMMY_SP.with_def_site_ctxt(expn_id.to_expn_id());
 
     let proc_macro = Ident::new(sym::proc_macro, span);
-    let krate = cx.item(span, proc_macro, Vec::new(), ast::ItemKind::ExternCrate(None));
+    let krate = cx.item(span, ast::AttrVec::new(), ast::ItemKind::ExternCrate(None, proc_macro));
 
     let bridge = Ident::new(sym::bridge, span);
     let client = Ident::new(sym::client, span);
@@ -311,92 +303,96 @@ fn mk_decls(cx: &mut ExtCtxt<'_>, macros: &[ProcMacro]) -> P<ast::Item> {
     // that we generate expressions. The position of each NodeId
     // in the 'proc_macros' Vec corresponds to its position
     // in the static array that will be generated
-    let decls = {
-        let local_path = |cx: &ExtCtxt<'_>, sp: Span, name| {
-            cx.expr_path(cx.path(sp.with_ctxt(span.ctxt()), vec![name]))
-        };
-        let proc_macro_ty_method_path = |cx: &ExtCtxt<'_>, method| {
-            cx.expr_path(cx.path(span, vec![proc_macro, bridge, client, proc_macro_ty, method]))
-        };
-        macros
-            .iter()
-            .map(|m| match m {
+    let decls = macros
+        .iter()
+        .map(|m| {
+            let harness_span = span;
+            let span = match m {
+                ProcMacro::Derive(m) => m.span,
+                ProcMacro::Attr(m) | ProcMacro::Bang(m) => m.span,
+            };
+            let local_path = |cx: &ExtCtxt<'_>, ident| cx.expr_path(cx.path(span, vec![ident]));
+            let proc_macro_ty_method_path = |cx: &ExtCtxt<'_>, method| {
+                cx.expr_path(cx.path(
+                    span.with_ctxt(harness_span.ctxt()),
+                    vec![proc_macro, bridge, client, proc_macro_ty, method],
+                ))
+            };
+            match m {
                 ProcMacro::Derive(cd) => {
                     cx.resolver.declare_proc_macro(cd.id);
+                    // The call needs to use `harness_span` so that the const stability checker
+                    // accepts it.
                     cx.expr_call(
-                        span,
+                        harness_span,
                         proc_macro_ty_method_path(cx, custom_derive),
-                        vec![
-                            cx.expr_str(cd.span, cd.trait_name),
-                            cx.expr_vec_slice(
+                        thin_vec![
+                            cx.expr_str(span, cd.trait_name),
+                            cx.expr_array_ref(
                                 span,
                                 cd.attrs
                                     .iter()
-                                    .map(|&s| cx.expr_str(cd.span, s))
-                                    .collect::<Vec<_>>(),
+                                    .map(|&s| cx.expr_str(span, s))
+                                    .collect::<ThinVec<_>>(),
                             ),
-                            local_path(cx, cd.span, cd.function_name),
+                            local_path(cx, cd.function_ident),
                         ],
                     )
                 }
-                ProcMacro::Def(ca) => {
+                ProcMacro::Attr(ca) | ProcMacro::Bang(ca) => {
                     cx.resolver.declare_proc_macro(ca.id);
-                    let ident = match ca.def_type {
-                        ProcMacroDefType::Attr => attr,
-                        ProcMacroDefType::Bang => bang,
+                    let ident = match m {
+                        ProcMacro::Attr(_) => attr,
+                        ProcMacro::Bang(_) => bang,
+                        ProcMacro::Derive(_) => unreachable!(),
                     };
 
+                    // The call needs to use `harness_span` so that the const stability checker
+                    // accepts it.
                     cx.expr_call(
-                        span,
+                        harness_span,
                         proc_macro_ty_method_path(cx, ident),
-                        vec![
-                            cx.expr_str(ca.span, ca.function_name.name),
-                            local_path(cx, ca.span, ca.function_name),
+                        thin_vec![
+                            cx.expr_str(span, ca.function_ident.name),
+                            local_path(cx, ca.function_ident),
                         ],
                     )
                 }
-            })
-            .collect()
-    };
+            }
+        })
+        .collect();
 
-    let decls_static = cx
-        .item_static(
+    let mut decls_static = cx.item_static(
+        span,
+        Ident::new(sym::_DECLS, span),
+        cx.ty_ref(
             span,
-            Ident::new(sym::_DECLS, span),
-            cx.ty_rptr(
+            cx.ty(
                 span,
-                cx.ty(
-                    span,
-                    ast::TyKind::Slice(
-                        cx.ty_path(cx.path(span, vec![proc_macro, bridge, client, proc_macro_ty])),
-                    ),
+                ast::TyKind::Slice(
+                    cx.ty_path(cx.path(span, vec![proc_macro, bridge, client, proc_macro_ty])),
                 ),
-                None,
-                ast::Mutability::Not,
             ),
+            None,
             ast::Mutability::Not,
-            cx.expr_vec_slice(span, decls),
-        )
-        .map(|mut i| {
-            let attr = cx.meta_word(span, sym::rustc_proc_macro_decls);
-            i.attrs.push(cx.attribute(attr));
-
-            let deprecated_attr = attr::mk_nested_word_item(Ident::new(sym::deprecated, span));
-            let allow_deprecated_attr =
-                attr::mk_list_item(Ident::new(sym::allow, span), vec![deprecated_attr]);
-            i.attrs.push(cx.attribute(allow_deprecated_attr));
-
-            i
-        });
-
-    let block = cx.expr_block(
-        cx.block(span, vec![cx.stmt_item(span, krate), cx.stmt_item(span, decls_static)]),
+        ),
+        ast::Mutability::Not,
+        cx.expr_array_ref(span, decls),
     );
+    decls_static.attrs.extend([
+        cx.attr_word(sym::rustc_proc_macro_decls, span),
+        cx.attr_word(sym::used, span),
+        cx.attr_nested_word(sym::allow, sym::deprecated, span),
+    ]);
+
+    let block = ast::ConstItemRhs::Body(cx.expr_block(
+        cx.block(span, thin_vec![cx.stmt_item(span, krate), cx.stmt_item(span, decls_static)]),
+    ));
 
     let anon_constant = cx.item_const(
         span,
         Ident::new(kw::Underscore, span),
-        cx.ty(span, ast::TyKind::Tup(Vec::new())),
+        cx.ty(span, ast::TyKind::Tup(ThinVec::new())),
         block,
     );
 

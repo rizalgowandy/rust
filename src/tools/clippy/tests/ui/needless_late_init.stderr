@@ -1,186 +1,295 @@
-error: unneeded late initalization
-  --> $DIR/needless_late_init.rs:4:5
+error: unneeded late initialization
+  --> tests/ui/needless_late_init.rs:25:5
+   |
+LL |     let a;
+   |     ^^^^^^ created here
+LL |
+LL |     a = "zero";
+   |     ^^^^^^^^^^ initialised here
+   |
+   = note: `-D clippy::needless-late-init` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::needless_late_init)]`
+help: move the declaration `a` here
+   |
+LL ~     
+LL |
+LL ~     let a = "zero";
+   |
+
+error: unneeded late initialization
+  --> tests/ui/needless_late_init.rs:29:5
+   |
+LL |     let b;
+   |     ^^^^^^ created here
+...
+LL |     b = 1;
+   |     ^^^^^ initialised here
+   |
+help: move the declaration `b` here
+   |
+LL ~     
+LL |
+LL |     let c;
+LL |
+LL ~     let b = 1;
+   |
+
+error: unneeded late initialization
+  --> tests/ui/needless_late_init.rs:31:5
+   |
+LL |     let c;
+   |     ^^^^^^ created here
+...
+LL |     c = 2;
+   |     ^^^^^ initialised here
+   |
+help: move the declaration `c` here
+   |
+LL ~     
+LL |
+LL |     b = 1;
+LL ~     let c = 2;
+   |
+
+error: unneeded late initialization
+  --> tests/ui/needless_late_init.rs:36:5
+   |
+LL |     let d: usize;
+   |     ^^^^^^^^^^^^^ created here
+LL |
+LL |     d = 1;
+   |     ^^^^^ initialised here
+   |
+help: move the declaration `d` here
+   |
+LL ~     
+LL |
+LL ~     let d: usize = 1;
+   |
+
+error: unneeded late initialization
+  --> tests/ui/needless_late_init.rs:40:5
+   |
+LL |     let e;
+   |     ^^^^^^ created here
+LL |
+LL |     e = format!("{}", d);
+   |     ^^^^^^^^^^^^^^^^^^^^ initialised here
+   |
+help: move the declaration `e` here
+   |
+LL ~     
+LL |
+LL ~     let e = format!("{}", d);
+   |
+
+error: unneeded late initialization
+  --> tests/ui/needless_late_init.rs:46:5
    |
 LL |     let a;
    |     ^^^^^^
    |
-   = note: `-D clippy::needless-late-init` implied by `-D warnings`
-help: declare `a` here
+help: move the declaration `a` here and remove the assignments from the `match` arms
    |
-LL |     let a = match n {
-   |     +++++++
-help: remove the assignments from the `match` arms
-   |
+LL ~     
+LL |
+LL |     let n = 1;
+LL ~     let a = match n {
 LL ~         1 => "one",
 LL |         _ => {
 LL ~             "two"
+LL |         },
+LL ~     };
    |
-help: add a semicolon after the `match` expression
-   |
-LL |     };
-   |      +
 
-error: unneeded late initalization
-  --> $DIR/needless_late_init.rs:13:5
+error: unneeded late initialization
+  --> tests/ui/needless_late_init.rs:56:5
    |
 LL |     let b;
    |     ^^^^^^
    |
-help: declare `b` here
+help: move the declaration `b` here and remove the assignments from the branches
    |
-LL |     let b = if n == 3 {
-   |     +++++++
-help: remove the assignments from the branches
-   |
+LL ~     
+LL |
+LL ~     let b = if n == 3 {
 LL ~         "four"
 LL |     } else {
 LL ~         "five"
+LL ~     };
    |
-help: add a semicolon after the `if` expression
-   |
-LL |     };
-   |      +
 
-error: unneeded late initalization
-  --> $DIR/needless_late_init.rs:20:5
-   |
-LL |     let c;
-   |     ^^^^^^
-   |
-help: declare `c` here
-   |
-LL |     let c = if let Some(n) = Some(5) {
-   |     +++++++
-help: remove the assignments from the branches
-   |
-LL ~         n
-LL |     } else {
-LL ~         -50
-   |
-help: add a semicolon after the `if` expression
-   |
-LL |     };
-   |      +
-
-error: unneeded late initalization
-  --> $DIR/needless_late_init.rs:27:5
+error: unneeded late initialization
+  --> tests/ui/needless_late_init.rs:64:5
    |
 LL |     let d;
    |     ^^^^^^
    |
-help: declare `d` here
+help: move the declaration `d` here and remove the assignments from the branches
    |
-LL |     let d = if true {
-   |     +++++++
-help: remove the assignments from the branches
-   |
+LL ~     
+LL |
+LL ~     let d = if true {
+LL |         let temp = 5;
 LL ~         temp
 LL |     } else {
 LL ~         15
+LL ~     };
    |
-help: add a semicolon after the `if` expression
-   |
-LL |     };
-   |      +
 
-error: unneeded late initalization
-  --> $DIR/needless_late_init.rs:35:5
+error: unneeded late initialization
+  --> tests/ui/needless_late_init.rs:73:5
    |
 LL |     let e;
    |     ^^^^^^
    |
-help: declare `e` here
+help: move the declaration `e` here and remove the assignments from the branches
    |
-LL |     let e = if true {
-   |     +++++++
-help: remove the assignments from the branches
-   |
+LL ~     
+LL |
+LL ~     let e = if true {
 LL ~         format!("{} {}", a, b)
 LL |     } else {
-LL ~         format!("{}", c)
+LL ~         format!("{}", n)
+LL ~     };
    |
-help: add a semicolon after the `if` expression
-   |
-LL |     };
-   |      +
 
-error: unneeded late initalization
-  --> $DIR/needless_late_init.rs:42:5
+error: unneeded late initialization
+  --> tests/ui/needless_late_init.rs:81:5
    |
 LL |     let f;
    |     ^^^^^^
    |
-help: declare `f` here
+help: move the declaration `f` here and remove the assignments from the `match` arms
    |
-LL |     let f = match 1 {
-   |     +++++++
-help: remove the assignments from the `match` arms
+LL ~     
+LL |
+LL ~     let f = match 1 {
+LL ~         1 => "three",
    |
-LL -         1 => f = "three",
-LL +         1 => "three",
-   | 
 
-error: unneeded late initalization
-  --> $DIR/needless_late_init.rs:48:5
+error: unneeded late initialization
+  --> tests/ui/needless_late_init.rs:88:5
    |
 LL |     let g: usize;
    |     ^^^^^^^^^^^^^
    |
-help: declare `g` here
+help: move the declaration `g` here and remove the assignments from the branches
    |
-LL |     let g: usize = if true {
-   |     ++++++++++++++
-help: remove the assignments from the branches
+LL ~     
+LL |
+LL ~     let g: usize = if true {
+LL ~         5
+LL |     } else {
+LL |         panic!();
+LL ~     };
    |
-LL -         g = 5;
-LL +         5
-   | 
-help: add a semicolon after the `if` expression
-   |
-LL |     };
-   |      +
 
-error: unneeded late initalization
-  --> $DIR/needless_late_init.rs:63:5
+error: unneeded late initialization
+  --> tests/ui/needless_late_init.rs:97:5
+   |
+LL |     let x;
+   |     ^^^^^^ created here
+...
+LL |     x = 1;
+   |     ^^^^^ initialised here
+   |
+help: move the declaration `x` here
+   |
+LL ~     
+LL |
+LL |     let y = SignificantDrop;
+LL ~     let x = 1;
+   |
+
+error: unneeded late initialization
+  --> tests/ui/needless_late_init.rs:102:5
+   |
+LL |     let x;
+   |     ^^^^^^ created here
+...
+LL |     x = SignificantDrop;
+   |     ^^^^^^^^^^^^^^^^^^^ initialised here
+   |
+help: move the declaration `x` here
+   |
+LL ~     
+LL |
+LL |     let y = 1;
+LL ~     let x = SignificantDrop;
+   |
+
+error: unneeded late initialization
+  --> tests/ui/needless_late_init.rs:107:5
+   |
+LL |     let x;
+   |     ^^^^^^ created here
+...
+LL |     x = SignificantDrop;
+   |     ^^^^^^^^^^^^^^^^^^^ initialised here
+   |
+help: move the declaration `x` here
+   |
+LL ~     
+LL |
+...
+LL |     let y = Box::new(4);
+LL ~     let x = SignificantDrop;
+   |
+
+error: unneeded late initialization
+  --> tests/ui/needless_late_init.rs:127:5
    |
 LL |     let a;
    |     ^^^^^^
    |
-help: declare `a` here
+help: move the declaration `a` here and remove the assignments from the `match` arms
    |
-LL |     let a = match n {
-   |     +++++++
-help: remove the assignments from the `match` arms
-   |
+LL ~     
+LL |
+LL |     let n = 1;
+LL ~     let a = match n {
 LL ~         1 => f().await,
 LL |         _ => {
 LL ~             "two"
+LL |         },
+LL ~     };
    |
-help: add a semicolon after the `match` expression
-   |
-LL |     };
-   |      +
 
-error: unneeded late initalization
-  --> $DIR/needless_late_init.rs:80:5
+error: unneeded late initialization
+  --> tests/ui/needless_late_init.rs:145:5
    |
 LL |     let a;
    |     ^^^^^^
    |
-help: declare `a` here
+help: move the declaration `a` here and remove the assignments from the `match` arms
    |
-LL |     let a = match n {
-   |     +++++++
-help: remove the assignments from the `match` arms
-   |
+LL ~     
+LL |
+LL |     let n = 1;
+LL ~     let a = match n {
 LL ~         1 => f(),
 LL |         _ => {
 LL ~             "two"
+LL |         },
+LL ~     };
    |
-help: add a semicolon after the `match` expression
-   |
-LL |     };
-   |      +
 
-error: aborting due to 9 previous errors
+error: unneeded late initialization
+  --> tests/ui/needless_late_init.rs:298:5
+   |
+LL |     let r;
+   |     ^^^^^^ created here
+LL |
+LL |     (r = 5);
+   |     ^^^^^^^ initialised here
+   |
+help: move the declaration `r` here
+   |
+LL ~     
+LL |
+LL ~     let r = 5;
+   |
+
+error: aborting due to 17 previous errors
 

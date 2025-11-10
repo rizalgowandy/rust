@@ -4,10 +4,10 @@
 
 Motorola 680x0 Linux
 
-## Designated Developers
+## Target Maintainers
 
-* [@glaubitz](https://github.com/glaubitz)
-* [@ricky26](https://github.com/ricky26)
+[@glaubitz](https://github.com/glaubitz)
+[@ricky26](https://github.com/ricky26)
 
 ## Requirements
 
@@ -87,7 +87,7 @@ Rust programs can be built for that target:
 rustc --target m68k-unknown-linux-gnu your-code.rs
 ```
 
-Very simple progams can be run using the `qemu-m68k-static` program:
+Very simple programs can be run using the `qemu-m68k-static` program:
 
 ```text
 $ qemu-m68k-static your-code

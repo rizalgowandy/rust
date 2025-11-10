@@ -1,50 +1,34 @@
-//! Tidy check to ensure that crate `edition` is '2018' or '2021'.
+//! Tidy check to ensure that crate `edition` is '2021' or '2024'.
 
 use std::path::Path;
 
-fn is_edition_2018(mut line: &str) -> bool {
-    line = line.trim();
-    line == "edition = \"2018\""
-}
+use crate::diagnostics::{CheckId, TidyCtx};
+use crate::walk::{filter_dirs, walk};
 
-fn is_edition_2021(mut line: &str) -> bool {
-    line = line.trim();
-    line == "edition = \"2021\""
-}
+pub fn check(path: &Path, tidy_ctx: TidyCtx) {
+    let mut check = tidy_ctx.start_check(CheckId::new("edition").path(path));
+    walk(path, |path, _is_dir| filter_dirs(path), &mut |entry, contents| {
+        let file = entry.path();
+        let filename = file.file_name().unwrap();
+        if filename != "Cargo.toml" {
+            return;
+        }
 
-pub fn check(path: &Path, bad: &mut bool) {
-    super::walk(
-        path,
-        &mut |path| super::filter_dirs(path) || path.ends_with("src/test"),
-        &mut |entry, contents| {
-            let file = entry.path();
-            let filename = file.file_name().unwrap();
-            if filename != "Cargo.toml" {
-                return;
-            }
+        let is_current_edition = contents
+            .lines()
+            .any(|line| line.trim() == "edition = \"2021\"" || line.trim() == "edition = \"2024\"");
 
-            // Not all library crates are ready to migrate to 2021.
-            if file.components().any(|c| c.as_os_str() == "library")
-                && file.components().all(|c| c.as_os_str() != "std")
-            {
-                let has = contents.lines().any(is_edition_2018);
-                if !has {
-                    tidy_error!(
-                        bad,
-                        "{} doesn't have `edition = \"2018\"` on a separate line",
-                        file.display()
-                    );
-                }
-            } else {
-                let is_2021 = contents.lines().any(is_edition_2021);
-                if !is_2021 {
-                    tidy_error!(
-                        bad,
-                        "{} doesn't have `edition = \"2021\"` on a separate line",
-                        file.display()
-                    );
-                }
-            }
-        },
-    );
+        let is_workspace = contents.lines().any(|line| line.trim() == "[workspace]");
+        let is_package = contents.lines().any(|line| line.trim() == "[package]");
+        assert!(is_workspace || is_package);
+
+        // Check that all packages use the 2021 edition. Virtual workspaces don't allow setting an
+        // edition, so these shouldn't be checked.
+        if is_package && !is_current_edition {
+            check.error(format!(
+                "{} doesn't have `edition = \"2021\"` or `edition = \"2024\"` on a separate line",
+                file.display()
+            ));
+        }
+    });
 }

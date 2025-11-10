@@ -15,7 +15,8 @@ fn it_works() {
 ```
 
 Tests "pass" if they return without an error. They "fail" if they [panic], or
-return a [`Result`] with an error.
+return a type such as [`Result`] that implements the [`Termination`] trait
+with a non-zero value.
 
 By passing the [`--test` option] to `rustc`, the compiler will build the crate
 in a special mode to construct an executable that will run the tests in the
@@ -80,7 +81,7 @@ behavior.
 
 > Note: When running with [`cargo test`], the libtest CLI arguments must be
 > passed after the `--` argument to differentiate between flags for Cargo and
-> those for the harness. For example: `cargo test -- --nocapture`
+> those for the harness. For example: `cargo test -- --no-capture`
 
 ### Filters
 
@@ -157,13 +158,25 @@ unstable-options` flag. See [tracking issue
 
 The following options affect how tests are executed.
 
+#### `--fail-fast`
+
+Stops tests after the first failure.
+
+If running tests in parallel (which is the default), then tests that have already been started on
+other threads will be allowed to run to completion before the process exits.
+
+Note that when running tests in parallel, the test execution order is non-deterministic:
+if multiple tests would fail, the first failure encountered will be reported.
+
+⚠️ 🚧 This requires the `-Z unstable-options` flag.
+
 #### `--test-threads` _NUM_THREADS_
 
 Sets the number of threads to use for running tests in parallel. By default,
 uses the amount of concurrency available on the hardware as indicated by
 [`available_parallelism`].
 
-This can also be specified with the `RUST_TEST_THREADS` environment variable.
+Deprecated: this can also be specified with the `RUST_TEST_THREADS` environment variable.
 
 #### `--force-run-in-process`
 
@@ -185,7 +198,7 @@ docs](../../unstable-book/compiler-flags/report-time.html) for more information.
 
 Runs the tests in random order, as opposed to the default alphabetical order.
 
-This may also be specified by setting the `RUST_TEST_SHUFFLE` environment
+Deprecated: this may also be specified by setting the `RUST_TEST_SHUFFLE` environment
 variable to anything but `0`.
 
 The random number generator seed that is output can be passed to
@@ -208,7 +221,7 @@ the tests in the same order both times.
 _SEED_ is any 64-bit unsigned integer, for example, one produced by
 [`--shuffle`](#--shuffle).
 
-This can also be specified with the `RUST_TEST_SHUFFLE_SEED` environment
+Deprecated: this can also be specified with the `RUST_TEST_SHUFFLE_SEED` environment
 variable.
 
 ⚠️ 🚧 This option is [unstable](#unstable-options), and requires the `-Z
@@ -224,20 +237,22 @@ The following options affect the output behavior.
 Displays one character per test instead of one line per test. This is an alias
 for [`--format=terse`](#--format-format).
 
-#### `--nocapture`
+#### `--no-capture`
 
 Does not capture the stdout and stderr of the test, and allows tests to print
 to the console. Usually the output is captured, and only displayed if the test
 fails.
 
-This may also be specified by setting the `RUST_TEST_NOCAPTURE` environment
+Deprecated: this may also be specified by setting the `RUST_TEST_NOCAPTURE` environment
 variable to anything but `0`.
+
+`--nocapture` is a deprecated alias for `--no-capture`.
 
 #### `--show-output`
 
 Displays the stdout and stderr of successful tests after all tests have run.
 
-Contrast this with [`--nocapture`](#--nocapture) which allows tests to print
+Contrast this with [`--no-capture`](#--no-capture) which allows tests to print
 *while they are running*, which can cause interleaved output if there are
 multiple tests running in parallel, `--show-output` ensures the output is
 contiguous, but requires waiting for all tests to finish.
@@ -246,7 +261,7 @@ contiguous, but requires waiting for all tests to finish.
 
 Control when colored terminal output is used. Valid options:
 
-* `auto`: Colorize if stdout is a tty and [`--nocapture`](#--nocapture) is not
+* `auto`: Colorize if stdout is a tty and [`--no-capture`](#--no-capture) is not
   used. This is the default.
 * `always`: Always colorize the output.
 * `never`: Never colorize the output.
@@ -267,7 +282,9 @@ Controls the format of the output. Valid options:
 
 Writes the results of the tests to the given file.
 
-#### `--report-time` _FORMAT_
+This option is deprecated.
+
+#### `--report-time`
 
 ⚠️ 🚧 This option is [unstable](#unstable-options), and requires the `-Z
 unstable-options` flag. See [tracking issue
@@ -304,6 +321,7 @@ Experimental support for using custom test harnesses is available on the
 [`libtest`]: ../../test/index.html
 [`main` function]: ../../reference/crates-and-source-files.html#main-functions
 [`Result`]: ../../std/result/index.html
+[`Termination`]: ../../std/process/trait.Termination.html
 [`test` cfg option]: ../../reference/conditional-compilation.html#test
 [attribute-ignore]: ../../reference/attributes/testing.html#the-ignore-attribute
 [attribute-should_panic]: ../../reference/attributes/testing.html#the-should_panic-attribute

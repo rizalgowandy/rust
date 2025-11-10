@@ -9,6 +9,8 @@ macro_rules! from_transmute {
         impl core::convert::From<$from> for $to {
             #[inline]
             fn from(value: $from) -> $to {
+                // Safety: transmuting between vectors is safe, but the caller of this macro
+                // checks the invariants
                 unsafe { core::mem::transmute(value) }
             }
         }
@@ -19,11 +21,14 @@ macro_rules! from_transmute {
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 mod x86;
 
-#[cfg(any(target_arch = "wasm32"))]
+#[cfg(target_arch = "wasm32")]
 mod wasm32;
 
-#[cfg(any(target_arch = "aarch64", target_arch = "arm",))]
+#[cfg(any(target_arch = "aarch64", target_arch = "arm64ec", target_arch = "arm",))]
 mod arm;
 
 #[cfg(any(target_arch = "powerpc", target_arch = "powerpc64"))]
 mod powerpc;
+
+#[cfg(target_arch = "loongarch64")]
+mod loongarch64;

@@ -8,16 +8,14 @@ mod linewritershim;
 #[cfg(test)]
 mod tests;
 
-use crate::error;
-use crate::fmt;
-use crate::io::Error;
-
-pub use bufreader::BufReader;
-pub use bufwriter::BufWriter;
 #[stable(feature = "bufwriter_into_parts", since = "1.56.0")]
 pub use bufwriter::WriterPanicked;
-pub use linewriter::LineWriter;
 use linewritershim::LineWriterShim;
+
+#[stable(feature = "rust1", since = "1.0.0")]
+pub use self::{bufreader::BufReader, bufwriter::BufWriter, linewriter::LineWriter};
+use crate::io::Error;
+use crate::{error, fmt};
 
 /// An error returned by [`BufWriter::into_inner`] which combines an error that
 /// happened while writing out the buffer, and the buffered writer object
@@ -48,7 +46,7 @@ use linewritershim::LineWriterShim;
 pub struct IntoInnerError<W>(W, Error);
 
 impl<W> IntoInnerError<W> {
-    /// Construct a new IntoInnerError
+    /// Constructs a new IntoInnerError
     fn new(writer: W, error: Error) -> Self {
         Self(writer, error)
     }
@@ -181,12 +179,7 @@ impl<W> From<IntoInnerError<W>> for Error {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<W: Send + fmt::Debug> error::Error for IntoInnerError<W> {
-    #[allow(deprecated, deprecated_in_future)]
-    fn description(&self) -> &str {
-        error::Error::description(self.error())
-    }
-}
+impl<W: Send + fmt::Debug> error::Error for IntoInnerError<W> {}
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<W> fmt::Display for IntoInnerError<W> {

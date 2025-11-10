@@ -18,6 +18,7 @@ mod should_lint {
 
         impl S {
             fn foo() {}
+            //~^ same_name_method
         }
 
         impl T1 for S {
@@ -32,6 +33,7 @@ mod should_lint {
 
         impl S {
             fn clone() {}
+            //~^ same_name_method
         }
     }
 
@@ -42,6 +44,7 @@ mod should_lint {
 
         impl<U> S<U> {
             fn foo() {}
+            //~^ same_name_method
         }
 
         impl<U: Copy> T1 for S<U> {
@@ -56,18 +59,21 @@ mod should_lint {
 
         impl S {
             fn foo() {}
+            //~^ same_name_method
         }
 
         impl T1 for S {}
     }
 
-    mod mulitply_conflicit_trait {
+    mod multiple_conflicting_traits {
         use crate::{T1, T2};
 
         struct S;
 
         impl S {
             fn foo() {}
+            //~^ same_name_method
+            //~| same_name_method
         }
 
         impl T1 for S {}
@@ -105,6 +111,21 @@ mod should_not_lint {
         impl T3 for S {
             type foo = usize;
         }
+    }
+}
+
+mod check_expect_suppression {
+    use crate::T1;
+
+    struct S;
+
+    impl S {
+        #[expect(clippy::same_name_method)]
+        fn foo() {}
+    }
+
+    impl T1 for S {
+        fn foo() {}
     }
 }
 

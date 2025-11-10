@@ -1,7 +1,7 @@
-#![feature(bool_to_option)]
-#![feature(crate_visibility_modifier)]
+// tidy-alphabetical-start
 #![feature(box_patterns)]
-#![recursion_limit = "256"]
+#![feature(negative_impls)]
+// tidy-alphabetical-end
 
 mod helpers;
 pub mod pp;

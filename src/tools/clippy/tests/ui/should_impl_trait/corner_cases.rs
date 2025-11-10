@@ -1,4 +1,5 @@
-#![warn(clippy::all, clippy::pedantic)]
+//@ check-pass
+
 #![allow(
     clippy::missing_errors_doc,
     clippy::needless_pass_by_value,
@@ -8,7 +9,8 @@
     clippy::missing_safety_doc,
     clippy::wrong_self_convention,
     clippy::missing_panics_doc,
-    clippy::return_self_not_must_use
+    clippy::return_self_not_must_use,
+    clippy::unused_async
 )]
 
 use std::ops::Mul;

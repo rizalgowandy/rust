@@ -1,10 +1,16 @@
+use crate::cmp::Ordering;
+use crate::ffi::CStr;
 use crate::fmt;
+use crate::hash::{Hash, Hasher};
+use crate::marker::PhantomData;
+use crate::ptr::NonNull;
 
 /// A struct containing information about the location of a panic.
 ///
-/// This structure is created by [`PanicInfo::location()`].
+/// This structure is created by [`PanicHookInfo::location()`] and [`PanicInfo::location()`].
 ///
 /// [`PanicInfo::location()`]: crate::panic::PanicInfo::location
+/// [`PanicHookInfo::location()`]: ../../std/panic/struct.PanicHookInfo.html#method.location
 ///
 /// # Examples
 ///
@@ -28,12 +34,65 @@ use crate::fmt;
 /// Files are compared as strings, not `Path`, which could be unexpected.
 /// See [`Location::file`]'s documentation for more discussion.
 #[lang = "panic_location"]
-#[derive(Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Copy, Clone)]
 #[stable(feature = "panic_hooks", since = "1.10.0")]
 pub struct Location<'a> {
-    file: &'a str,
+    // A raw pointer is used rather than a reference because the pointer is valid for one more byte
+    // than the length stored in this pointer; the additional byte is the NUL-terminator used by
+    // `Location::file_as_c_str`.
+    filename: NonNull<str>,
     line: u32,
     col: u32,
+    _filename: PhantomData<&'a str>,
+}
+
+#[stable(feature = "panic_hooks", since = "1.10.0")]
+impl PartialEq for Location<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        // Compare col / line first as they're cheaper to compare and more likely to differ,
+        // while not impacting the result.
+        self.col == other.col && self.line == other.line && self.file() == other.file()
+    }
+}
+
+#[stable(feature = "panic_hooks", since = "1.10.0")]
+impl Eq for Location<'_> {}
+
+#[stable(feature = "panic_hooks", since = "1.10.0")]
+impl Ord for Location<'_> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.file()
+            .cmp(other.file())
+            .then_with(|| self.line.cmp(&other.line))
+            .then_with(|| self.col.cmp(&other.col))
+    }
+}
+
+#[stable(feature = "panic_hooks", since = "1.10.0")]
+impl PartialOrd for Location<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+#[stable(feature = "panic_hooks", since = "1.10.0")]
+impl Hash for Location<'_> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.file().hash(state);
+        self.line.hash(state);
+        self.col.hash(state);
+    }
+}
+
+#[stable(feature = "panic_hooks", since = "1.10.0")]
+impl fmt::Debug for Location<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Location")
+            .field("file", &self.file())
+            .field("line", &self.line)
+            .field("column", &self.col)
+            .finish()
+    }
 }
 
 impl<'a> Location<'a> {
@@ -43,7 +102,7 @@ impl<'a> Location<'a> {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```standalone_crate
     /// use std::panic::Location;
     ///
     /// /// Returns the [`Location`] at which it is called.
@@ -81,8 +140,9 @@ impl<'a> Location<'a> {
     /// ```
     #[must_use]
     #[stable(feature = "track_caller", since = "1.46.0")]
-    #[rustc_const_unstable(feature = "const_caller_location", issue = "76156")]
+    #[rustc_const_stable(feature = "const_caller_location", since = "1.79.0")]
     #[track_caller]
+    #[inline]
     pub const fn caller() -> &'static Location<'static> {
         crate::intrinsics::caller_location()
     }
@@ -122,8 +182,32 @@ impl<'a> Location<'a> {
     /// ```
     #[must_use]
     #[stable(feature = "panic_hooks", since = "1.10.0")]
-    pub fn file(&self) -> &str {
-        self.file
+    #[rustc_const_stable(feature = "const_location_fields", since = "1.79.0")]
+    pub const fn file(&self) -> &'a str {
+        // SAFETY: The filename is valid.
+        unsafe { self.filename.as_ref() }
+    }
+
+    /// Returns the name of the source file as a nul-terminated `CStr`.
+    ///
+    /// This is useful for interop with APIs that expect C/C++ `__FILE__` or
+    /// `std::source_location::file_name`, both of which return a nul-terminated `const char*`.
+    #[must_use]
+    #[inline]
+    #[stable(feature = "file_with_nul", since = "1.92.0")]
+    #[rustc_const_stable(feature = "file_with_nul", since = "1.92.0")]
+    pub const fn file_as_c_str(&self) -> &'a CStr {
+        let filename = self.filename.as_ptr();
+
+        // SAFETY: The filename is valid for `filename_len+1` bytes, so this addition can't
+        // overflow.
+        let cstr_len = unsafe { crate::mem::size_of_val_raw(filename).unchecked_add(1) };
+
+        // SAFETY: The filename is valid for `filename_len+1` bytes.
+        let slice = unsafe { crate::slice::from_raw_parts(filename.cast(), cstr_len) };
+
+        // SAFETY: The filename is guaranteed to have a trailing nul byte and no interior nul bytes.
+        unsafe { CStr::from_bytes_with_nul_unchecked(slice) }
     }
 
     /// Returns the line number from which the panic originated.
@@ -145,7 +229,9 @@ impl<'a> Location<'a> {
     /// ```
     #[must_use]
     #[stable(feature = "panic_hooks", since = "1.10.0")]
-    pub fn line(&self) -> u32 {
+    #[rustc_const_stable(feature = "const_location_fields", since = "1.79.0")]
+    #[inline]
+    pub const fn line(&self) -> u32 {
         self.line
     }
 
@@ -168,26 +254,22 @@ impl<'a> Location<'a> {
     /// ```
     #[must_use]
     #[stable(feature = "panic_col", since = "1.25.0")]
-    pub fn column(&self) -> u32 {
+    #[rustc_const_stable(feature = "const_location_fields", since = "1.79.0")]
+    #[inline]
+    pub const fn column(&self) -> u32 {
         self.col
-    }
-}
-
-#[unstable(
-    feature = "panic_internals",
-    reason = "internal details of the implementation of the `panic!` and related macros",
-    issue = "none"
-)]
-impl<'a> Location<'a> {
-    #[doc(hidden)]
-    pub const fn internal_constructor(file: &'a str, line: u32, col: u32) -> Self {
-        Location { file, line, col }
     }
 }
 
 #[stable(feature = "panic_hook_display", since = "1.26.0")]
 impl fmt::Display for Location<'_> {
+    #[inline]
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}:{}:{}", self.file, self.line, self.col)
+        write!(formatter, "{}:{}:{}", self.file(), self.line, self.col)
     }
 }
+
+#[stable(feature = "panic_hooks", since = "1.10.0")]
+unsafe impl Send for Location<'_> {}
+#[stable(feature = "panic_hooks", since = "1.10.0")]
+unsafe impl Sync for Location<'_> {}

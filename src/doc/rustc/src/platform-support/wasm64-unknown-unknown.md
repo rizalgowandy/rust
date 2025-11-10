@@ -9,7 +9,7 @@ WebAssembly proposal.
 
 ## Target maintainers
 
-- Alex Crichton, https://github.com/alexcrichton
+[@alexcrichton](https://github.com/alexcrichton)
 
 ## Requirements
 
@@ -30,13 +30,13 @@ is 8-bytes large as well as pointers. The tradeoff, though, is that the maximum
 memory size is now the full 64-bit address space instead of the 4GB as limited
 by the 32-bit address space for `wasm32-unknown-unknown`.
 
-This target is not a stable target. The [memory64] WebAssembly proposal is stil
+This target is not a stable target. The [memory64] WebAssembly proposal is still
 in-progress and not standardized. This means that there are not many engines
 which implement the `memory64` feature and if they do they're likely behind a
 flag, for example:
 
 * Nodejs - `--experimental-wasm-memory64`
-* Wasmtime - `--wasm-features memory64`
+* Wasmtime - `--wasm memory64`
 
 Also note that at this time the `wasm64-unknown-unknown` target assumes the
 presence of other merged wasm proposals such as (with their LLVM feature flags):
@@ -64,7 +64,7 @@ This target does not support `panic=unwind` at this time.
 ## Building the target
 
 You can build Rust with support for the target by adding it to the `target`
-list in `config.toml`, and the target also requires `lld` to be built to work.
+list in `bootstrap.toml`, and the target also requires `lld` to be built to work.
 
 ```toml
 [build]

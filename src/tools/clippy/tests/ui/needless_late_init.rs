@@ -1,7 +1,50 @@
-#![allow(unused)]
+//@aux-build:proc_macros.rs
+#![allow(
+    clippy::assign_op_pattern,
+    clippy::blocks_in_conditions,
+    clippy::let_and_return,
+    clippy::let_unit_value,
+    clippy::nonminimal_bool,
+    clippy::uninlined_format_args,
+    clippy::useless_vec
+)]
+
+extern crate proc_macros;
+
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::rc::Rc;
+
+struct SignificantDrop;
+impl std::ops::Drop for SignificantDrop {
+    fn drop(&mut self) {
+        println!("dropped");
+    }
+}
+
+fn simple() {
+    let a;
+    //~^ needless_late_init
+    a = "zero";
+
+    let b;
+    //~^ needless_late_init
+    let c;
+    //~^ needless_late_init
+    b = 1;
+    c = 2;
+
+    let d: usize;
+    //~^ needless_late_init
+    d = 1;
+
+    let e;
+    //~^ needless_late_init
+    e = format!("{}", d);
+}
 
 fn main() {
     let a;
+    //~^ needless_late_init
     let n = 1;
     match n {
         1 => a = "one",
@@ -11,20 +54,15 @@ fn main() {
     }
 
     let b;
+    //~^ needless_late_init
     if n == 3 {
         b = "four";
     } else {
         b = "five"
     }
 
-    let c;
-    if let Some(n) = Some(5) {
-        c = n;
-    } else {
-        c = -50;
-    }
-
     let d;
+    //~^ needless_late_init
     if true {
         let temp = 5;
         d = temp;
@@ -33,26 +71,52 @@ fn main() {
     }
 
     let e;
+    //~^ needless_late_init
     if true {
         e = format!("{} {}", a, b);
     } else {
-        e = format!("{}", c);
+        e = format!("{}", n);
     }
 
     let f;
+    //~^ needless_late_init
     match 1 {
         1 => f = "three",
         _ => return,
     }; // has semi
 
     let g: usize;
+    //~^ needless_late_init
     if true {
         g = 5;
     } else {
         panic!();
     }
 
-    println!("{}", a);
+    // Drop order only matters if both are significant
+    let x;
+    //~^ needless_late_init
+    let y = SignificantDrop;
+    x = 1;
+
+    let x;
+    //~^ needless_late_init
+    let y = 1;
+    x = SignificantDrop;
+
+    let x;
+    //~^ needless_late_init
+    // types that should be considered insignificant
+    let y = 1;
+    let y = "2";
+    let y = String::new();
+    let y = vec![3.0];
+    let y = HashMap::<usize, usize>::new();
+    let y = BTreeMap::<usize, usize>::new();
+    let y = HashSet::<usize>::new();
+    let y = BTreeSet::<usize>::new();
+    let y = Box::new(4);
+    x = SignificantDrop;
 }
 
 async fn in_async() -> &'static str {
@@ -61,6 +125,7 @@ async fn in_async() -> &'static str {
     }
 
     let a;
+    //~^ needless_late_init
     let n = 1;
     match n {
         1 => a = f().await,
@@ -78,6 +143,7 @@ const fn in_const() -> &'static str {
     }
 
     let a;
+    //~^ needless_late_init
     let n = 1;
     match n {
         1 => a = f(),
@@ -89,6 +155,7 @@ const fn in_const() -> &'static str {
     a
 }
 
+#[proc_macros::inline_macros]
 fn does_not_lint() {
     let z;
     if false {
@@ -146,35 +213,89 @@ fn does_not_lint() {
     }
     y = 3;
 
-    macro_rules! assign {
-        ($i:ident) => {
-            $i = 1;
-        };
-    }
     let x;
-    assign!(x);
+    inline!($x = 1;);
 
     let x;
     if true {
-        assign!(x);
+        inline!($x = 1;);
     } else {
         x = 2;
     }
 
-    macro_rules! in_macro {
-        () => {
-            let x;
+    inline!({
+        let x;
+        x = 1;
+
+        let x;
+        if true {
             x = 1;
+        } else {
+            x = 2;
+        }
+    });
 
-            let x;
-            if true {
-                x = 1;
-            } else {
-                x = 2;
-            }
-        };
+    // ignore if-lets - https://github.com/rust-lang/rust-clippy/issues/8613
+    let x;
+    if let Some(n) = Some("v") {
+        x = 1;
+    } else {
+        x = 2;
     }
-    in_macro!();
 
-    println!("{}", x);
+    let x;
+    if true && let Some(n) = Some("let chains too") {
+        x = 1;
+    } else {
+        x = 2;
+    }
+
+    // ignore mut bindings
+    // https://github.com/shepmaster/twox-hash/blob/b169c16d86eb8ea4a296b0acb9d00ca7e3c3005f/src/sixty_four.rs#L88-L93
+    // https://github.com/dtolnay/thiserror/blob/21c26903e29cb92ba1a7ff11e82ae2001646b60d/tests/test_generics.rs#L91-L100
+    let mut x: usize;
+    x = 1;
+    x = 2;
+    x = 3;
+
+    // should not move the declaration if `x` has a significant drop, and there
+    // is another binding with a significant drop between it and the first usage
+    let x;
+    let y = SignificantDrop;
+    x = SignificantDrop;
+}
+
+#[rustfmt::skip]
+fn issue8911() -> u32 {
+    let x;
+    match 1 {
+        _ if { x = 1; false } => return 1,
+        _ => return 2,
+    }
+
+    let x;
+    if { x = 1; true } {
+        return 1;
+    } else {
+        return 2;
+    }
+
+    3
+}
+
+macro_rules! issue13776_mac {
+    ($var:expr, $val:literal) => {
+        $var = $val;
+    };
+}
+
+fn issue13776() {
+    let x;
+    issue13776_mac!(x, 10); // should not lint
+}
+
+fn issue9895() {
+    let r;
+    //~^ needless_late_init
+    (r = 5);
 }

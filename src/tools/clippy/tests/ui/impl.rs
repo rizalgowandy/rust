@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+#![allow(dead_code, clippy::extra_unused_lifetimes)]
 #![warn(clippy::multiple_inherent_impl)]
 
 struct MyStruct;
@@ -8,6 +8,8 @@ impl MyStruct {
 }
 
 impl MyStruct {
+    //~^ multiple_inherent_impl
+
     fn second() {}
 }
 
@@ -22,6 +24,8 @@ mod submod {
     }
 
     impl super::MyStruct {
+        //~^ multiple_inherent_impl
+
         fn third() {}
     }
 }
@@ -42,6 +46,8 @@ impl WithArgs<u64> {
     fn f2() {}
 }
 impl WithArgs<u64> {
+    //~^ multiple_inherent_impl
+
     fn f3() {}
 }
 
@@ -62,6 +68,42 @@ struct OneAllowedImpl;
 impl OneAllowedImpl {}
 #[allow(clippy::multiple_inherent_impl)]
 impl OneAllowedImpl {}
-impl OneAllowedImpl {} // Lint, only one of the three blocks is allowed.
+impl OneAllowedImpl {}
+//~^ multiple_inherent_impl
+
+#[expect(clippy::multiple_inherent_impl)]
+struct ExpectedFulfilled;
+
+impl ExpectedFulfilled {}
+impl ExpectedFulfilled {}
+
+struct OneExpected;
+impl OneExpected {}
+#[expect(clippy::multiple_inherent_impl)]
+impl OneExpected {}
+impl OneExpected {}
+//~^ multiple_inherent_impl
+
+// issue #8714
+struct Lifetime<'s> {
+    s: &'s str,
+}
+
+impl Lifetime<'_> {}
+impl Lifetime<'_> {} // false negative
+
+impl<'a> Lifetime<'a> {}
+impl<'a> Lifetime<'a> {} // false negative
+
+impl<'b> Lifetime<'b> {} // false negative?
+
+impl Lifetime<'static> {}
+
+struct Generic<G> {
+    g: Vec<G>,
+}
+
+impl<G> Generic<G> {}
+impl<G> Generic<G> {} // false negative
 
 fn main() {}

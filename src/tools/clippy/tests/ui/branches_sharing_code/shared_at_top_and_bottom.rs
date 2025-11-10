@@ -1,6 +1,6 @@
+#![deny(clippy::branches_sharing_code, clippy::if_same_then_else)]
 #![allow(dead_code)]
-#![deny(clippy::if_same_then_else, clippy::branches_sharing_code)]
-
+//@no-rustfix
 // branches_sharing_code at the top and bottom of the if blocks
 
 struct DataPack {
@@ -14,6 +14,8 @@ fn overlapping_eq_regions() {
 
     // Overlap with separator
     if x == 7 {
+        //~^ branches_sharing_code
+
         let t = 7;
         let _overlap_start = t * 2;
         let _overlap_end = 2 * t;
@@ -30,6 +32,8 @@ fn overlapping_eq_regions() {
 
     // Overlap with separator
     if x == 99 {
+        //~^ branches_sharing_code
+
         let r = 7;
         let _overlap_start = r;
         let _overlap_middle = r * r;
@@ -59,11 +63,13 @@ fn complexer_example() {
     let x = 8;
     let y = 9;
     if (x > 7 && y < 13) || (x + y) % 2 == 1 {
+        //~^ branches_sharing_code
+
         let a = 0xcafe;
         let b = 0xffff00ff;
         let e_id = gen_id(a, b);
 
-        println!("From the a `{}` to the b `{}`", a, b);
+        println!("From the a `{a}` to the b `{b}`");
 
         let pack = DataPack {
             id: e_id,
@@ -76,7 +82,7 @@ fn complexer_example() {
         let b = 0xffff00ff;
         let e_id = gen_id(a, b);
 
-        println!("The new ID is '{}'", e_id);
+        println!("The new ID is '{e_id}'");
 
         let pack = DataPack {
             id: e_id,
@@ -92,6 +98,8 @@ fn added_note_for_expression_use() -> u32 {
     let x = 9;
 
     let _ = if x == 7 {
+        //~^ branches_sharing_code
+
         let _ = 19;
 
         let _splitter = 6;
@@ -104,6 +112,8 @@ fn added_note_for_expression_use() -> u32 {
     };
 
     if x == 9 {
+        //~^ branches_sharing_code
+
         let _ = 17;
 
         let _splitter = 6;
@@ -117,3 +127,42 @@ fn added_note_for_expression_use() -> u32 {
 }
 
 fn main() {}
+
+mod issue14873 {
+    fn foo() -> i32 {
+        todo!()
+    }
+
+    macro_rules! qux {
+        ($a:ident, $b:ident, $condition:expr) => {
+            let mut $a: i32 = foo();
+            let mut $b: i32 = foo();
+            if $condition {
+                "."
+            } else {
+                ""
+            };
+            $a = foo();
+            $b = foo();
+        };
+    }
+
+    fn share_on_top_and_bottom() {
+        if false {
+            qux!(a, b, a == b);
+        } else {
+            qux!(a, b, a != b);
+        };
+
+        if false {
+            //~^ branches_sharing_code
+            let x = 1;
+            qux!(a, b, a == b);
+            let y = 1;
+        } else {
+            let x = 1;
+            qux!(a, b, a != b);
+            let y = 1;
+        }
+    }
+}

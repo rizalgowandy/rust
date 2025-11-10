@@ -2,7 +2,7 @@
 //!
 //! See `rustc_codegen_ssa/src/meth.rs` for reference.
 
-use crate::constant::data_id_for_alloc_id;
+use crate::constant::data_id_for_vtable;
 use crate::prelude::*;
 
 pub(crate) fn vtable_memflags() -> MemFlags {
@@ -31,7 +31,7 @@ pub(crate) fn size_of_obj(fx: &mut FunctionCx<'_, '_, '_>, vtable: Value) -> Val
     )
 }
 
-pub(crate) fn min_align_of_obj(fx: &mut FunctionCx<'_, '_, '_>, vtable: Value) -> Value {
+pub(crate) fn align_of_obj(fx: &mut FunctionCx<'_, '_, '_>, vtable: Value) -> Value {
     let usize_size = fx.layout_of(fx.tcx.types.usize).size.bytes() as usize;
     fx.bcx.ins().load(
         fx.pointer_type,
@@ -43,14 +43,25 @@ pub(crate) fn min_align_of_obj(fx: &mut FunctionCx<'_, '_, '_>, vtable: Value) -
 
 pub(crate) fn get_ptr_and_method_ref<'tcx>(
     fx: &mut FunctionCx<'_, '_, 'tcx>,
-    arg: CValue<'tcx>,
+    mut arg: CValue<'tcx>,
     idx: usize,
-) -> (Value, Value) {
-    let (ptr, vtable) = if let Abi::ScalarPair(_, _) = arg.layout().abi {
-        arg.load_scalar_pair(fx)
+) -> (Pointer, Value) {
+    if let BackendRepr::Scalar(_) = arg.layout().backend_repr {
+        while !arg.layout().ty.is_raw_ptr() && !arg.layout().ty.is_ref() {
+            let (idx, _) = arg
+                .layout()
+                .non_1zst_field(fx)
+                .expect("not exactly one non-1-ZST field in a `DispatchFromDyn` type");
+            arg = arg.value_field(fx, idx);
+        }
+    }
+
+    let (ptr, vtable) = if let BackendRepr::ScalarPair(_, _) = arg.layout().backend_repr {
+        let (ptr, vtable) = arg.load_scalar_pair(fx);
+        (Pointer::new(ptr), vtable)
     } else {
         let (ptr, vtable) = arg.try_to_ptr().unwrap();
-        (ptr.get_addr(fx), vtable.unwrap())
+        (ptr, vtable.unwrap())
     };
 
     let usize_size = fx.layout_of(fx.tcx.types.usize).size.bytes();
@@ -66,14 +77,12 @@ pub(crate) fn get_ptr_and_method_ref<'tcx>(
 pub(crate) fn get_vtable<'tcx>(
     fx: &mut FunctionCx<'_, '_, 'tcx>,
     ty: Ty<'tcx>,
-    trait_ref: Option<ty::PolyExistentialTraitRef<'tcx>>,
+    trait_ref: Option<ty::ExistentialTraitRef<'tcx>>,
 ) -> Value {
-    let alloc_id = fx.tcx.vtable_allocation((ty, trait_ref));
-    let data_id =
-        data_id_for_alloc_id(&mut fx.constants_cx, &mut *fx.module, alloc_id, Mutability::Not);
-    let local_data_id = fx.module.declare_data_in_func(data_id, &mut fx.bcx.func);
+    let data_id = data_id_for_vtable(fx.tcx, &mut fx.constants_cx, fx.module, ty, trait_ref);
+    let local_data_id = fx.module.declare_data_in_func(data_id, fx.bcx.func);
     if fx.clif_comments.enabled() {
-        fx.add_comment(local_data_id, format!("vtable: {:?}", alloc_id));
+        fx.add_comment(local_data_id, "vtable");
     }
-    fx.bcx.ins().global_value(fx.pointer_type, local_data_id)
+    fx.bcx.ins().symbol_value(fx.pointer_type, local_data_id)
 }

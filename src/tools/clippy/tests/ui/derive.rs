@@ -1,11 +1,21 @@
-#![feature(untagged_unions)]
-#![allow(dead_code)]
+#![allow(
+    clippy::non_canonical_clone_impl,
+    clippy::non_canonical_partial_ord_impl,
+    clippy::needless_lifetimes,
+    clippy::repr_packed_without_abi,
+    dead_code
+)]
 #![warn(clippy::expl_impl_clone_on_copy)]
+#![expect(incomplete_features)] // `unsafe_fields` is incomplete for the time being
+#![feature(unsafe_fields)] // `clone()` cannot be derived automatically on unsafe fields
+
 
 #[derive(Copy)]
 struct Qux;
 
 impl Clone for Qux {
+    //~^ expl_impl_clone_on_copy
+
     fn clone(&self) -> Self {
         Qux
     }
@@ -30,6 +40,8 @@ struct Lt<'a> {
 }
 
 impl<'a> Clone for Lt<'a> {
+    //~^ expl_impl_clone_on_copy
+
     fn clone(&self) -> Self {
         unimplemented!()
     }
@@ -41,6 +53,8 @@ struct BigArray {
 }
 
 impl Clone for BigArray {
+    //~^ expl_impl_clone_on_copy
+
     fn clone(&self) -> Self {
         unimplemented!()
     }
@@ -52,6 +66,8 @@ struct FnPtr {
 }
 
 impl Clone for FnPtr {
+    //~^ expl_impl_clone_on_copy
+
     fn clone(&self) -> Self {
         unimplemented!()
     }
@@ -72,6 +88,8 @@ impl<T> Clone for Generic<T> {
 #[derive(Copy)]
 struct Generic2<T>(T);
 impl<T: Clone> Clone for Generic2<T> {
+    //~^ expl_impl_clone_on_copy
+
     fn clone(&self) -> Self {
         Self(self.0.clone())
     }
@@ -86,4 +104,56 @@ impl<T: Clone, U> Clone for GenericRef<'_, T, U> {
     }
 }
 
+// https://github.com/rust-lang/rust-clippy/issues/10188
+#[repr(packed)]
+#[derive(Copy)]
+struct Packed<T>(T);
+
+impl<T: Copy> Clone for Packed<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+fn issue14558() {
+    pub struct Valid {
+        pub unsafe actual: (),
+    }
+
+    unsafe impl Copy for Valid {}
+
+    impl Clone for Valid {
+        #[inline]
+        fn clone(&self) -> Self {
+            *self
+        }
+    }
+}
+
 fn main() {}
+
+mod issue15708 {
+    // Check that `allow`/`expect` attributes are recognized on the type definition node
+    #[expect(clippy::expl_impl_clone_on_copy)]
+    #[derive(Copy)]
+    struct S;
+
+    impl Clone for S {
+        fn clone(&self) -> Self {
+            S
+        }
+    }
+}
+
+mod issue15842 {
+    #[derive(Copy)]
+    struct S;
+
+    // Check that `allow`/`expect` attributes are recognized on the `impl Clone` node
+    #[expect(clippy::expl_impl_clone_on_copy)]
+    impl Clone for S {
+        fn clone(&self) -> Self {
+            S
+        }
+    }
+}

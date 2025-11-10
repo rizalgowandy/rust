@@ -1,6 +1,11 @@
-// run-rustfix
 #![warn(clippy::needless_for_each)]
-#![allow(unused, clippy::needless_return, clippy::match_single_binding)]
+#![allow(unused)]
+#![allow(
+    clippy::let_unit_value,
+    clippy::match_single_binding,
+    clippy::needless_return,
+    clippy::uninlined_format_args
+)]
 
 use std::collections::HashMap;
 
@@ -8,27 +13,34 @@ fn should_lint() {
     let v: Vec<i32> = Vec::new();
     let mut acc = 0;
     v.iter().for_each(|elem| {
+        //~^ needless_for_each
         acc += elem;
     });
     v.into_iter().for_each(|elem| {
+        //~^ needless_for_each
         acc += elem;
     });
 
     [1, 2, 3].iter().for_each(|elem| {
+        //~^ needless_for_each
         acc += elem;
     });
 
     let mut hash_map: HashMap<i32, i32> = HashMap::new();
     hash_map.iter().for_each(|(k, v)| {
+        //~^ needless_for_each
         acc += k + v;
     });
     hash_map.iter_mut().for_each(|(k, v)| {
+        //~^ needless_for_each
         acc += *k + *v;
     });
     hash_map.keys().for_each(|k| {
+        //~^ needless_for_each
         acc += k;
     });
     hash_map.values().for_each(|v| {
+        //~^ needless_for_each
         acc += v;
     });
 
@@ -36,6 +48,7 @@ fn should_lint() {
         Vec::new()
     }
     my_vec().iter().for_each(|elem| {
+        //~^ needless_for_each
         acc += elem;
     });
 }
@@ -104,10 +117,35 @@ fn should_not_lint() {
         }),
     }
 
-    // `for_each` is in a let bingind.
+    // `for_each` is in a let binding.
     let _ = v.iter().for_each(|elem| {
+        acc += elem;
+    });
+    // `for_each` has a closure with an unsafe block.
+    v.iter().for_each(|elem| unsafe {
         acc += elem;
     });
 }
 
 fn main() {}
+
+mod issue14734 {
+    fn let_desugar(rows: &[u8]) {
+        let mut v = vec![];
+        rows.iter().for_each(|x| _ = v.push(x));
+        //~^ needless_for_each
+    }
+
+    fn do_something(_: &u8, _: u8) {}
+
+    fn single_expr(rows: &[u8]) {
+        rows.iter().for_each(|x| do_something(x, 1u8));
+        //~^ needless_for_each
+    }
+}
+
+fn issue15256() {
+    let vec: Vec<i32> = Vec::new();
+    vec.iter().for_each(|v| println!("{v}"));
+    //~^ needless_for_each
+}

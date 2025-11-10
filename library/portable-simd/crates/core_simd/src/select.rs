@@ -1,20 +1,19 @@
-use crate::simd::intrinsics;
 use crate::simd::{LaneCount, Mask, MaskElement, Simd, SimdElement, SupportedLaneCount};
 
-impl<T, const LANES: usize> Mask<T, LANES>
+impl<T, const N: usize> Mask<T, N>
 where
     T: MaskElement,
-    LaneCount<LANES>: SupportedLaneCount,
+    LaneCount<N>: SupportedLaneCount,
 {
-    /// Choose lanes from two vectors.
+    /// Choose elements from two vectors.
     ///
-    /// For each lane in the mask, choose the corresponding lane from `true_values` if
-    /// that lane mask is true, and `false_values` if that lane mask is false.
+    /// For each element in the mask, choose the corresponding element from `true_values` if
+    /// that element mask is true, and `false_values` if that element mask is false.
     ///
+    /// # Examples
     /// ```
     /// # #![feature(portable_simd)]
-    /// # #[cfg(feature = "std")] use core_simd::{Simd, Mask};
-    /// # #[cfg(not(feature = "std"))] use core::simd::{Simd, Mask};
+    /// # use core::simd::{Simd, Mask};
     /// let a = Simd::from_array([0, 1, 2, 3]);
     /// let b = Simd::from_array([4, 5, 6, 7]);
     /// let mask = Mask::from_array([true, false, false, true]);
@@ -23,26 +22,24 @@ where
     /// ```
     #[inline]
     #[must_use = "method returns a new vector and does not mutate the original inputs"]
-    pub fn select<U>(
-        self,
-        true_values: Simd<U, LANES>,
-        false_values: Simd<U, LANES>,
-    ) -> Simd<U, LANES>
+    pub fn select<U>(self, true_values: Simd<U, N>, false_values: Simd<U, N>) -> Simd<U, N>
     where
         U: SimdElement<Mask = T>,
     {
-        unsafe { intrinsics::simd_select(self.to_int(), true_values, false_values) }
+        // Safety: The mask has been cast to a vector of integers,
+        // and the operands to select between are vectors of the same type and length.
+        unsafe { core::intrinsics::simd::simd_select(self.to_int(), true_values, false_values) }
     }
 
-    /// Choose lanes from two masks.
+    /// Choose elements from two masks.
     ///
-    /// For each lane in the mask, choose the corresponding lane from `true_values` if
-    /// that lane mask is true, and `false_values` if that lane mask is false.
+    /// For each element in the mask, choose the corresponding element from `true_values` if
+    /// that element mask is true, and `false_values` if that element mask is false.
     ///
+    /// # Examples
     /// ```
     /// # #![feature(portable_simd)]
-    /// # #[cfg(feature = "std")] use core_simd::Mask;
-    /// # #[cfg(not(feature = "std"))] use core::simd::Mask;
+    /// # use core::simd::Mask;
     /// let a = Mask::<i32, 4>::from_array([true, true, false, false]);
     /// let b = Mask::<i32, 4>::from_array([false, false, true, true]);
     /// let mask = Mask::<i32, 4>::from_array([true, false, false, true]);

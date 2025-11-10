@@ -1,70 +1,78 @@
+use rustc_abi::Align;
 use rustc_middle::mir::*;
-use rustc_middle::ty::{self, TyCtxt};
-use rustc_target::abi::Align;
+use rustc_middle::ty::{self, AdtDef, TyCtxt};
+use tracing::debug;
 
-/// Returns `true` if this place is allowed to be less aligned
-/// than its containing struct (because it is within a packed
-/// struct).
-pub fn is_disaligned<'tcx, L>(
+/// If the place may be less aligned than its type requires
+/// (because it is in a packed type), returns the AdtDef
+/// and packed alignment of its most-unaligned projection.
+pub fn place_unalignment<'tcx, L>(
     tcx: TyCtxt<'tcx>,
     local_decls: &L,
-    param_env: ty::ParamEnv<'tcx>,
+    typing_env: ty::TypingEnv<'tcx>,
     place: Place<'tcx>,
-) -> bool
+) -> Option<(AdtDef<'tcx>, Align)>
 where
     L: HasLocalDecls<'tcx>,
 {
-    debug!("is_disaligned({:?})", place);
-    let pack = match is_within_packed(tcx, local_decls, place) {
-        None => {
-            debug!("is_disaligned({:?}) - not within packed", place);
-            return false;
-        }
-        Some(pack) => pack,
+    debug!("unalignment({:?})", place);
+    let Some((descr, pack)) = most_packed_projection(tcx, local_decls, place) else {
+        debug!("unalignment({:?}) - not within packed", place);
+        return None;
     };
 
     let ty = place.ty(local_decls, tcx).ty;
-    match tcx.layout_of(param_env.and(ty)) {
-        Ok(layout) if layout.align.abi <= pack => {
+    let unsized_tail = || tcx.struct_tail_for_codegen(ty, typing_env);
+    match tcx.layout_of(typing_env.as_query_input(ty)) {
+        Ok(layout)
+            if layout.align.abi <= pack
+                && (layout.is_sized()
+                    || matches!(unsized_tail().kind(), ty::Slice(..) | ty::Str)) =>
+        {
             // If the packed alignment is greater or equal to the field alignment, the type won't be
-            // further disaligned.
+            // further unaligned.
+            // However we need to ensure the field is sized; for unsized fields, `layout.align` is
+            // just an approximation -- except when the unsized tail is a slice, where the alignment
+            // is fully determined by the type.
             debug!(
-                "is_disaligned({:?}) - align = {}, packed = {}; not disaligned",
+                "unalignment({:?}) - align = {}, packed = {}; not unaligned",
                 place,
-                layout.align.abi.bytes(),
+                layout.align.bytes(),
                 pack.bytes()
             );
-            false
+            None
         }
         _ => {
-            debug!("is_disaligned({:?}) - true", place);
-            true
+            // We cannot figure out the layout. Conservatively assume that this is unaligned.
+            debug!("unalignment({:?}) - unaligned", place);
+            Some((descr, pack))
         }
     }
 }
 
-fn is_within_packed<'tcx, L>(
+/// If the place includes a projection from a packed struct,
+/// returns the AdtDef and packed alignment of the projection
+/// with the lowest pack
+pub fn most_packed_projection<'tcx, L>(
     tcx: TyCtxt<'tcx>,
     local_decls: &L,
     place: Place<'tcx>,
-) -> Option<Align>
+) -> Option<(AdtDef<'tcx>, Align)>
 where
     L: HasLocalDecls<'tcx>,
 {
-    for (place_base, elem) in place.iter_projections().rev() {
-        match elem {
-            // encountered a Deref, which is ABI-aligned
-            ProjectionElem::Deref => break,
-            ProjectionElem::Field(..) => {
-                let ty = place_base.ty(local_decls, tcx).ty;
-                match ty.kind() {
-                    ty::Adt(def, _) => return def.repr.pack,
-                    _ => {}
-                }
-            }
-            _ => {}
-        }
-    }
-
-    None
+    place
+        .iter_projections()
+        .rev()
+        // Stop at `Deref`; standard ABI alignment applies there.
+        .take_while(|(_base, elem)| !matches!(elem, ProjectionElem::Deref))
+        // Consider the packed alignments at play here...
+        .filter_map(|(base, _elem)| {
+            let adt = base.ty(local_decls, tcx).ty.ty_adt_def()?;
+            let pack = adt.repr().pack?;
+            Some((adt, pack))
+        })
+        // ... and compute their minimum.
+        // The overall smallest alignment is what matters.
+        .min_by_key(|(_, align)| *align)
 }

@@ -3,14 +3,7 @@
 #![warn(unreachable_pub)]
 #![recursion_limit = "256"]
 #![allow(clippy::match_like_matches_macro)]
-
-#[macro_use]
-extern crate derive_new;
-#[cfg(test)]
-#[macro_use]
-extern crate lazy_static;
-#[macro_use]
-extern crate log;
+#![allow(unreachable_pub)]
 
 // N.B. these crates are loaded from the sysroot, so they need extern crate.
 extern crate rustc_ast;
@@ -21,8 +14,15 @@ extern crate rustc_expand;
 extern crate rustc_parse;
 extern crate rustc_session;
 extern crate rustc_span;
+extern crate thin_vec;
+
+// Necessary to pull in object code as the rest of the rustc crates are shipped only as rmeta
+// files.
+#[allow(unused_extern_crates)]
+extern crate rustc_driver;
 
 use std::cell::RefCell;
+use std::cmp::min;
 use std::collections::HashMap;
 use std::fmt;
 use std::io::{self, Write};
@@ -38,15 +38,14 @@ use thiserror::Error;
 use crate::comment::LineClasses;
 use crate::emitter::Emitter;
 use crate::formatting::{FormatErrorMap, FormattingError, ReportedErrors, SourceFile};
-use crate::issues::Issue;
 use crate::modules::ModuleResolutionError;
+use crate::parse::parser::DirectoryOwnership;
 use crate::shape::Indent;
-use crate::syntux::parser::DirectoryOwnership;
 use crate::utils::indent_next_line;
 
 pub use crate::config::{
-    load_config, CliOptions, Color, Config, Edition, EmitMode, FileLines, FileName, NewlineStyle,
-    Range, Verbosity,
+    CliOptions, Color, Config, Edition, EmitMode, FileLines, FileName, NewlineStyle, Range,
+    StyleEdition, Verbosity, Version, load_config,
 };
 
 pub use crate::format_report_formatter::{FormatReportFormatter, FormatReportFormatterBuilder};
@@ -55,6 +54,13 @@ pub use crate::rustfmt_diff::{ModifiedChunk, ModifiedLines};
 
 #[macro_use]
 mod utils;
+
+macro_rules! static_regex {
+    ($re:literal) => {{
+        static RE: ::std::sync::OnceLock<::regex::Regex> = ::std::sync::OnceLock::new();
+        RE.get_or_init(|| ::regex::Regex::new($re).unwrap())
+    }};
+}
 
 mod attr;
 mod chains;
@@ -68,7 +74,6 @@ mod format_report_formatter;
 pub(crate) mod formatting;
 mod ignore_path;
 mod imports;
-mod issues;
 mod items;
 mod lists;
 mod macros;
@@ -77,6 +82,7 @@ mod missed_spans;
 pub(crate) mod modules;
 mod overflow;
 mod pairs;
+mod parse;
 mod patterns;
 mod release_channel;
 mod reorder;
@@ -84,12 +90,12 @@ mod rewrite;
 pub(crate) mod rustfmt_diff;
 mod shape;
 mod skip;
+mod sort;
 pub(crate) mod source_file;
 pub(crate) mod source_map;
 mod spanned;
 mod stmt;
 mod string;
-mod syntux;
 #[cfg(test)]
 mod test;
 mod types;
@@ -109,12 +115,6 @@ pub enum ErrorKind {
     /// Line ends in whitespace.
     #[error("left behind trailing whitespace")]
     TrailingWhitespace,
-    /// TODO or FIXME item without an issue number.
-    #[error("found {0}")]
-    BadIssue(Issue),
-    /// License check has failed.
-    #[error("license check failed")]
-    LicenseCheck,
     /// Used deprecated skip attribute.
     #[error("`rustfmt_skip` is deprecated; use `rustfmt::skip`")]
     DeprecatedAttr,
@@ -235,11 +235,7 @@ impl FormatReport {
                 ErrorKind::LostComment => {
                     errs.has_unformatted_code_errors = true;
                 }
-                ErrorKind::BadIssue(_)
-                | ErrorKind::LicenseCheck
-                | ErrorKind::DeprecatedAttr
-                | ErrorKind::BadAttr
-                | ErrorKind::VersionMismatch => {
+                ErrorKind::DeprecatedAttr | ErrorKind::BadAttr | ErrorKind::VersionMismatch => {
                     errs.has_check_errors = true;
                 }
                 _ => {}
@@ -263,8 +259,8 @@ impl FormatReport {
         self.internal
             .borrow()
             .0
-            .iter()
-            .map(|(_, errors)| errors.len())
+            .values()
+            .map(|errors| errors.len())
             .sum()
     }
 
@@ -310,7 +306,7 @@ fn format_snippet(snippet: &str, config: &Config, is_macro_def: bool) -> Option<
         let mut out: Vec<u8> = Vec::with_capacity(snippet.len() * 2);
         config.set().emit_mode(config::EmitMode::Stdout);
         config.set().verbose(Verbosity::Quiet);
-        config.set().hide_parse_errors(true);
+        config.set().show_parse_errors(false);
         if is_macro_def {
             config.set().error_on_unformatted(true);
         }
@@ -392,9 +388,15 @@ fn format_code_block(
         .snippet
         .rfind('}')
         .unwrap_or_else(|| formatted.snippet.len());
+
+    // It's possible that `block_len < FN_MAIN_PREFIX.len()`. This can happen if the code block was
+    // formatted into the empty string, leading to the enclosing `fn main() {\n}` being formatted
+    // into `fn main() {}`. In this case no unindentation is done.
+    let block_start = min(FN_MAIN_PREFIX.len(), block_len);
+
     let mut is_indented = true;
     let indent_str = Indent::from_width(config, config.tab_spaces()).to_string(config);
-    for (kind, ref line) in LineClasses::new(&formatted.snippet[FN_MAIN_PREFIX.len()..block_len]) {
+    for (kind, ref line) in LineClasses::new(&formatted.snippet[block_start..block_len]) {
         if !is_first {
             result.push('\n');
         } else {

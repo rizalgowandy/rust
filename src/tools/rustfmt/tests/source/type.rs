@@ -142,20 +142,18 @@ type MyFn = fn(a: SomeLongComplexType, b: SomeOtherLongComplexType,) -> Box<Futu
 
 // Const bound
 
-trait T: ~   const  Super {}
+trait T: [   const ] Super {}
 
-const fn not_quite_const<S: ~  const    T>() -> i32 { <S as T>::CONST }
+const fn not_quite_const<S: [  const  ]  T>() -> i32 { <S as T>::CONST }
 
-struct S<T:~  const   ?  Sized>(std::marker::PhantomData<T>);
+impl     const T for U {}
 
-impl ~    const T {}
+fn apit(_: impl [   const ] T) {}
 
-fn apit(_: impl ~   const T) {}
-
-fn rpit() -> impl ~  const T { S }
+fn rpit() -> impl [  const] T { S }
 
 pub struct Foo<T: Trait>(T);
-impl<T:   ~  const Trait> Foo<T> {
+impl<T:   [  const] Trait> Foo<T> {
     fn new(t: T) -> Self {
         Self(t)
     }

@@ -1,11 +1,10 @@
-use std::{io, io::prelude::Write};
+use std::io;
+use std::io::prelude::Write;
 
-use crate::{
-    console::ConsoleTestState,
-    test_result::TestResult,
-    time,
-    types::{TestDesc, TestName},
-};
+use crate::console::{ConsoleTestDiscoveryState, ConsoleTestState};
+use crate::test_result::TestResult;
+use crate::time;
+use crate::types::{TestDesc, TestName};
 
 mod json;
 mod junit;
@@ -18,6 +17,10 @@ pub(crate) use self::pretty::PrettyFormatter;
 pub(crate) use self::terse::TerseFormatter;
 
 pub(crate) trait OutputFormatter {
+    fn write_discovery_start(&mut self) -> io::Result<()>;
+    fn write_test_discovered(&mut self, desc: &TestDesc, test_type: &str) -> io::Result<()>;
+    fn write_discovery_finish(&mut self, state: &ConsoleTestDiscoveryState) -> io::Result<()>;
+
     fn write_run_start(&mut self, test_count: usize, shuffle_seed: Option<u64>) -> io::Result<()>;
     fn write_test_start(&mut self, desc: &TestDesc) -> io::Result<()>;
     fn write_timeout(&mut self, desc: &TestDesc) -> io::Result<()>;
@@ -30,6 +33,11 @@ pub(crate) trait OutputFormatter {
         state: &ConsoleTestState,
     ) -> io::Result<()>;
     fn write_run_finish(&mut self, state: &ConsoleTestState) -> io::Result<bool>;
+    fn write_merged_doctests_times(
+        &mut self,
+        total_time: f64,
+        compilation_time: f64,
+    ) -> io::Result<()>;
 }
 
 pub(crate) fn write_stderr_delimiter(test_output: &mut Vec<u8>, test_name: &TestName) {
@@ -38,5 +46,5 @@ pub(crate) fn write_stderr_delimiter(test_output: &mut Vec<u8>, test_name: &Test
         Some(_) => test_output.push(b'\n'),
         None => (),
     }
-    writeln!(test_output, "---- {} stderr ----", test_name).unwrap();
+    writeln!(test_output, "---- {test_name} stderr ----").unwrap();
 }

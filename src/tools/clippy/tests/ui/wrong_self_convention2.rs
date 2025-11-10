@@ -52,6 +52,8 @@ mod issue7179 {
 
         // lint
         pub fn from_be_self(self) -> Self {
+            //~^ wrong_self_convention
+
             S(i32::from_be(self.0))
         }
     }
@@ -61,6 +63,7 @@ mod issue7179 {
         fn from_be(s: Self) -> Self;
         // lint
         fn from_be_self(self) -> Self;
+        //~^ wrong_self_convention
     }
 
     trait Foo: Sized {
@@ -102,5 +105,15 @@ mod issue4546 {
         pub fn to_mut(self: Pin<&mut Self>) {}
 
         pub fn to_other_thingy(self: Pin<&Self>) {}
+    }
+}
+
+mod issue_8480_8513 {
+    struct Cat(String);
+
+    impl Cat {
+        fn is_animal(&mut self) -> bool {
+            todo!();
+        }
     }
 }

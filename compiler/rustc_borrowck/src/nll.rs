@@ -1,296 +1,178 @@
 //! The entry point of the NLL borrow checker.
 
-use rustc_data_structures::vec_map::VecMap;
-use rustc_errors::Diagnostic;
-use rustc_index::vec::IndexVec;
-use rustc_infer::infer::InferCtxt;
-use rustc_middle::mir::{create_dump_file, dump_enabled, dump_mir, PassWhere};
-use rustc_middle::mir::{
-    BasicBlock, Body, ClosureOutlivesSubject, ClosureRegionRequirements, LocalKind, Location,
-    Promoted,
-};
-use rustc_middle::ty::{self, OpaqueTypeKey, RegionKind, RegionVid, Ty};
-use rustc_span::symbol::sym;
-use std::env;
-use std::fmt::Debug;
 use std::io;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::str::FromStr;
 
-use polonius_engine::{Algorithm, Output};
+use polonius_engine::{Algorithm, AllFacts, Output};
+use rustc_data_structures::frozen::Frozen;
+use rustc_index::IndexSlice;
+use rustc_middle::mir::pretty::PrettyPrintMirOptions;
+use rustc_middle::mir::{Body, MirDumper, PassWhere, Promoted};
+use rustc_middle::ty::print::with_no_trimmed_paths;
+use rustc_middle::ty::{self, TyCtxt};
+use rustc_mir_dataflow::move_paths::MoveData;
+use rustc_mir_dataflow::points::DenseLocationMap;
+use rustc_session::config::MirIncludeSpans;
+use rustc_span::sym;
+use tracing::{debug, instrument};
 
-use rustc_mir_dataflow::impls::MaybeInitializedPlaces;
-use rustc_mir_dataflow::move_paths::{InitKind, InitLocation, MoveData};
-use rustc_mir_dataflow::ResultsCursor;
-
-use crate::{
-    borrow_set::BorrowSet,
-    constraint_generation,
-    diagnostics::RegionErrors,
-    facts::{AllFacts, AllFactsExt, RustcFacts},
-    invalidation,
-    location::LocationTable,
-    region_infer::{values::RegionValueElements, RegionInferenceContext},
-    renumber,
-    type_check::{self, MirTypeckRegionConstraints, MirTypeckResults},
-    universal_regions::UniversalRegions,
-    Upvar,
+use crate::borrow_set::BorrowSet;
+use crate::consumers::RustcFacts;
+use crate::diagnostics::RegionErrors;
+use crate::handle_placeholders::compute_sccs_applying_placeholder_outlives_constraints;
+use crate::polonius::legacy::{
+    PoloniusFacts, PoloniusFactsExt, PoloniusLocationTable, PoloniusOutput,
 };
-
-pub type PoloniusOutput = Output<RustcFacts>;
+use crate::polonius::{PoloniusContext, PoloniusDiagnosticsContext};
+use crate::region_infer::RegionInferenceContext;
+use crate::type_check::MirTypeckRegionConstraints;
+use crate::type_check::free_region_relations::UniversalRegionRelations;
+use crate::universal_regions::UniversalRegions;
+use crate::{
+    BorrowCheckRootCtxt, BorrowckInferCtxt, ClosureOutlivesSubject, ClosureRegionRequirements,
+    polonius, renumber,
+};
 
 /// The output of `nll::compute_regions`. This includes the computed `RegionInferenceContext`, any
 /// closure requirements to propagate, and any generated errors.
-crate struct NllOutput<'tcx> {
+pub(crate) struct NllOutput<'tcx> {
     pub regioncx: RegionInferenceContext<'tcx>,
-    pub opaque_type_values: VecMap<OpaqueTypeKey<'tcx>, Ty<'tcx>>,
-    pub polonius_input: Option<Box<AllFacts>>,
-    pub polonius_output: Option<Rc<PoloniusOutput>>,
+    pub polonius_input: Option<Box<PoloniusFacts>>,
+    pub polonius_output: Option<Box<PoloniusOutput>>,
     pub opt_closure_req: Option<ClosureRegionRequirements<'tcx>>,
     pub nll_errors: RegionErrors<'tcx>,
+
+    /// When using `-Zpolonius=next`: the data used to compute errors and diagnostics, e.g.
+    /// localized typeck and liveness constraints.
+    pub polonius_diagnostics: Option<PoloniusDiagnosticsContext>,
 }
 
 /// Rewrites the regions in the MIR to use NLL variables, also scraping out the set of universal
 /// regions (e.g., region parameters) declared on the function. That set will need to be given to
 /// `compute_regions`.
-#[instrument(skip(infcx, param_env, body, promoted), level = "debug")]
-pub(crate) fn replace_regions_in_mir<'cx, 'tcx>(
-    infcx: &InferCtxt<'cx, 'tcx>,
-    param_env: ty::ParamEnv<'tcx>,
+#[instrument(skip(infcx, body, promoted), level = "debug")]
+pub(crate) fn replace_regions_in_mir<'tcx>(
+    infcx: &BorrowckInferCtxt<'tcx>,
     body: &mut Body<'tcx>,
-    promoted: &mut IndexVec<Promoted, Body<'tcx>>,
+    promoted: &mut IndexSlice<Promoted, Body<'tcx>>,
 ) -> UniversalRegions<'tcx> {
-    let def = body.source.with_opt_param().as_local().unwrap();
+    let def = body.source.def_id().expect_local();
 
     debug!(?def);
 
     // Compute named region information. This also renumbers the inputs/outputs.
-    let universal_regions = UniversalRegions::new(infcx, def, param_env);
+    let universal_regions = UniversalRegions::new(infcx, def);
 
     // Replace all remaining regions with fresh inference variables.
     renumber::renumber_mir(infcx, body, promoted);
 
-    dump_mir(infcx.tcx, None, "renumber", &0, body, |_, _| Ok(()));
+    if let Some(dumper) = MirDumper::new(infcx.tcx, "renumber", body) {
+        dumper.dump_mir(body);
+    }
 
     universal_regions
 }
 
-// This function populates an AllFacts instance with base facts related to
-// MovePaths and needed for the move analysis.
-fn populate_polonius_move_facts(
-    all_facts: &mut AllFacts,
-    move_data: &MoveData<'_>,
-    location_table: &LocationTable,
-    body: &Body<'_>,
-) {
-    all_facts
-        .path_is_var
-        .extend(move_data.rev_lookup.iter_locals_enumerated().map(|(v, &m)| (m, v)));
+/// Computes the closure requirements given the current inference state.
+///
+/// This is intended to be used by before [BorrowCheckRootCtxt::handle_opaque_type_uses]
+/// because applying member constraints may rely on closure requirements.
+/// This is frequently the case of async functions where pretty much everything
+/// happens inside of the inner async block but the opaque only gets constrained
+/// in the parent function.
+pub(crate) fn compute_closure_requirements_modulo_opaques<'tcx>(
+    infcx: &BorrowckInferCtxt<'tcx>,
+    body: &Body<'tcx>,
+    location_map: Rc<DenseLocationMap>,
+    universal_region_relations: &Frozen<UniversalRegionRelations<'tcx>>,
+    constraints: &MirTypeckRegionConstraints<'tcx>,
+) -> Option<ClosureRegionRequirements<'tcx>> {
+    // FIXME(#146079): we shouldn't have to clone all this stuff here.
+    // Computing the region graph should take at least some of it by reference/`Rc`.
+    let lowered_constraints = compute_sccs_applying_placeholder_outlives_constraints(
+        constraints.clone(),
+        &universal_region_relations,
+        infcx,
+    );
+    let mut regioncx = RegionInferenceContext::new(
+        &infcx,
+        lowered_constraints,
+        universal_region_relations.clone(),
+        location_map,
+    );
 
-    for (child, move_path) in move_data.move_paths.iter_enumerated() {
-        if let Some(parent) = move_path.parent {
-            all_facts.child_path.push((child, parent));
-        }
-    }
-
-    let fn_entry_start = location_table
-        .start_index(Location { block: BasicBlock::from_u32(0u32), statement_index: 0 });
-
-    // initialized_at
-    for init in move_data.inits.iter() {
-        match init.location {
-            InitLocation::Statement(location) => {
-                let block_data = &body[location.block];
-                let is_terminator = location.statement_index == block_data.statements.len();
-
-                if is_terminator && init.kind == InitKind::NonPanicPathOnly {
-                    // We are at the terminator of an init that has a panic path,
-                    // and where the init should not happen on panic
-
-                    for &successor in block_data.terminator().successors() {
-                        if body[successor].is_cleanup {
-                            continue;
-                        }
-
-                        // The initialization happened in (or rather, when arriving at)
-                        // the successors, but not in the unwind block.
-                        let first_statement = Location { block: successor, statement_index: 0 };
-                        all_facts
-                            .path_assigned_at_base
-                            .push((init.path, location_table.start_index(first_statement)));
-                    }
-                } else {
-                    // In all other cases, the initialization just happens at the
-                    // midpoint, like any other effect.
-                    all_facts
-                        .path_assigned_at_base
-                        .push((init.path, location_table.mid_index(location)));
-                }
-            }
-            // Arguments are initialized on function entry
-            InitLocation::Argument(local) => {
-                assert!(body.local_kind(local) == LocalKind::Arg);
-                all_facts.path_assigned_at_base.push((init.path, fn_entry_start));
-            }
-        }
-    }
-
-    for (local, &path) in move_data.rev_lookup.iter_locals_enumerated() {
-        if body.local_kind(local) != LocalKind::Arg {
-            // Non-arguments start out deinitialised; we simulate this with an
-            // initial move:
-            all_facts.path_moved_at_base.push((path, fn_entry_start));
-        }
-    }
-
-    // moved_out_at
-    // deinitialisation is assumed to always happen!
-    all_facts
-        .path_moved_at_base
-        .extend(move_data.moves.iter().map(|mo| (mo.path, location_table.mid_index(mo.source))));
+    let (closure_region_requirements, _nll_errors) = regioncx.solve(infcx, body, None);
+    closure_region_requirements
 }
 
 /// Computes the (non-lexical) regions from the input MIR.
 ///
 /// This may result in errors being reported.
-pub(crate) fn compute_regions<'cx, 'tcx>(
-    infcx: &InferCtxt<'cx, 'tcx>,
-    universal_regions: UniversalRegions<'tcx>,
+pub(crate) fn compute_regions<'tcx>(
+    root_cx: &mut BorrowCheckRootCtxt<'tcx>,
+    infcx: &BorrowckInferCtxt<'tcx>,
     body: &Body<'tcx>,
-    promoted: &IndexVec<Promoted, Body<'tcx>>,
-    location_table: &LocationTable,
-    param_env: ty::ParamEnv<'tcx>,
-    flow_inits: &mut ResultsCursor<'cx, 'tcx, MaybeInitializedPlaces<'cx, 'tcx>>,
+    location_table: &PoloniusLocationTable,
     move_data: &MoveData<'tcx>,
     borrow_set: &BorrowSet<'tcx>,
-    upvars: &[Upvar<'tcx>],
-    use_polonius: bool,
+    location_map: Rc<DenseLocationMap>,
+    universal_region_relations: Frozen<UniversalRegionRelations<'tcx>>,
+    constraints: MirTypeckRegionConstraints<'tcx>,
+    mut polonius_facts: Option<AllFacts<RustcFacts>>,
+    polonius_context: Option<PoloniusContext>,
 ) -> NllOutput<'tcx> {
-    let mut all_facts =
-        (use_polonius || AllFacts::enabled(infcx.tcx)).then_some(AllFacts::default());
+    let polonius_output = root_cx.consumer.as_ref().map_or(false, |c| c.polonius_output())
+        || infcx.tcx.sess.opts.unstable_opts.polonius.is_legacy_enabled();
 
-    let universal_regions = Rc::new(universal_regions);
-
-    let elements = &Rc::new(RegionValueElements::new(&body));
-
-    // Run the MIR type-checker.
-    let MirTypeckResults { constraints, universal_region_relations, opaque_type_values } =
-        type_check::type_check(
-            infcx,
-            param_env,
-            body,
-            promoted,
-            &universal_regions,
-            location_table,
-            borrow_set,
-            &mut all_facts,
-            flow_inits,
-            move_data,
-            elements,
-            upvars,
-        );
-
-    if let Some(all_facts) = &mut all_facts {
-        let _prof_timer = infcx.tcx.prof.generic_activity("polonius_fact_generation");
-        all_facts.universal_region.extend(universal_regions.universal_regions());
-        populate_polonius_move_facts(all_facts, move_data, location_table, &body);
-
-        // Emit universal regions facts, and their relations, for Polonius.
-        //
-        // 1: universal regions are modeled in Polonius as a pair:
-        // - the universal region vid itself.
-        // - a "placeholder loan" associated to this universal region. Since they don't exist in
-        //   the `borrow_set`, their `BorrowIndex` are synthesized as the universal region index
-        //   added to the existing number of loans, as if they succeeded them in the set.
-        //
-        let borrow_count = borrow_set.len();
-        debug!(
-            "compute_regions: polonius placeholders, num_universals={}, borrow_count={}",
-            universal_regions.len(),
-            borrow_count
-        );
-
-        for universal_region in universal_regions.universal_regions() {
-            let universal_region_idx = universal_region.index();
-            let placeholder_loan_idx = borrow_count + universal_region_idx;
-            all_facts.placeholder.push((universal_region, placeholder_loan_idx.into()));
-        }
-
-        // 2: the universal region relations `outlives` constraints are emitted as
-        //  `known_placeholder_subset` facts.
-        for (fr1, fr2) in universal_region_relations.known_outlives() {
-            if fr1 != fr2 {
-                debug!(
-                    "compute_regions: emitting polonius `known_placeholder_subset` \
-                     fr1={:?}, fr2={:?}",
-                    fr1, fr2
-                );
-                all_facts.known_placeholder_subset.push((*fr1, *fr2));
-            }
-        }
-    }
-
-    // Create the region inference context, taking ownership of the
-    // region inference data that was contained in `infcx`, and the
-    // base constraints generated by the type-check.
-    let var_origins = infcx.take_region_var_origins();
-    let MirTypeckRegionConstraints {
-        placeholder_indices,
-        placeholder_index_to_region: _,
-        mut liveness_constraints,
-        outlives_constraints,
-        member_constraints,
-        closure_bounds_mapping,
-        universe_causes,
-        type_tests,
-    } = constraints;
-    let placeholder_indices = Rc::new(placeholder_indices);
-
-    constraint_generation::generate_constraints(
+    let lowered_constraints = compute_sccs_applying_placeholder_outlives_constraints(
+        constraints,
+        &universal_region_relations,
         infcx,
-        &mut liveness_constraints,
-        &mut all_facts,
+    );
+
+    // If requested, emit legacy polonius facts.
+    polonius::legacy::emit_facts(
+        &mut polonius_facts,
+        infcx.tcx,
         location_table,
-        &body,
+        body,
         borrow_set,
+        move_data,
+        &universal_region_relations,
+        &lowered_constraints,
     );
 
     let mut regioncx = RegionInferenceContext::new(
-        var_origins,
-        universal_regions,
-        placeholder_indices,
+        infcx,
+        lowered_constraints,
         universal_region_relations,
-        outlives_constraints,
-        member_constraints,
-        closure_bounds_mapping,
-        universe_causes,
-        type_tests,
-        liveness_constraints,
-        elements,
+        location_map,
     );
 
-    // Generate various additional constraints.
-    invalidation::generate_invalidates(infcx.tcx, &mut all_facts, location_table, body, borrow_set);
+    // If requested for `-Zpolonius=next`, convert NLL constraints to localized outlives constraints
+    // and use them to compute loan liveness.
+    let polonius_diagnostics = polonius_context.map(|polonius_context| {
+        polonius_context.compute_loan_liveness(infcx.tcx, &mut regioncx, body, borrow_set)
+    });
 
-    let def_id = body.source.def_id();
-
-    // Dump facts if requested.
-    let polonius_output = all_facts.as_ref().and_then(|all_facts| {
-        if infcx.tcx.sess.opts.debugging_opts.nll_facts {
+    // If requested: dump NLL facts, and run legacy polonius analysis.
+    let polonius_output = polonius_facts.as_ref().and_then(|polonius_facts| {
+        if infcx.tcx.sess.opts.unstable_opts.nll_facts {
+            let def_id = body.source.def_id();
             let def_path = infcx.tcx.def_path(def_id);
-            let dir_path = PathBuf::from(&infcx.tcx.sess.opts.debugging_opts.nll_facts_dir)
+            let dir_path = PathBuf::from(&infcx.tcx.sess.opts.unstable_opts.nll_facts_dir)
                 .join(def_path.to_filename_friendly_no_crate());
-            all_facts.write_to_dir(dir_path, location_table).unwrap();
+            polonius_facts.write_to_dir(dir_path, location_table).unwrap();
         }
 
-        if use_polonius {
-            let algorithm =
-                env::var("POLONIUS_ALGORITHM").unwrap_or_else(|_| String::from("Hybrid"));
-            let algorithm = Algorithm::from_str(&algorithm).unwrap();
+        if polonius_output {
+            let algorithm = infcx.tcx.env_var("POLONIUS_ALGORITHM").unwrap_or("Hybrid");
+            let algorithm = Algorithm::from_str(algorithm).unwrap();
             debug!("compute_regions: using polonius algorithm {:?}", algorithm);
             let _prof_timer = infcx.tcx.prof.generic_activity("polonius_analysis");
-            Some(Rc::new(Output::compute(&all_facts, algorithm, false)))
+            Some(Box::new(Output::compute(polonius_facts, algorithm, false)))
         } else {
             None
         }
@@ -298,82 +180,120 @@ pub(crate) fn compute_regions<'cx, 'tcx>(
 
     // Solve the region constraints.
     let (closure_region_requirements, nll_errors) =
-        regioncx.solve(infcx, &body, polonius_output.clone());
-
-    if !nll_errors.is_empty() {
-        // Suppress unhelpful extra errors in `infer_opaque_types`.
-        infcx.set_tainted_by_errors();
-    }
-
-    let remapped_opaque_tys = regioncx.infer_opaque_types(&infcx, opaque_type_values, body.span);
+        regioncx.solve(infcx, body, polonius_output.clone());
 
     NllOutput {
         regioncx,
-        opaque_type_values: remapped_opaque_tys,
-        polonius_input: all_facts.map(Box::new),
+        polonius_input: polonius_facts.map(Box::new),
         polonius_output,
         opt_closure_req: closure_region_requirements,
         nll_errors,
+        polonius_diagnostics,
     }
 }
 
-pub(super) fn dump_mir_results<'a, 'tcx>(
-    infcx: &InferCtxt<'a, 'tcx>,
+/// `-Zdump-mir=nll` dumps MIR annotated with NLL specific information:
+/// - free regions
+/// - inferred region values
+/// - region liveness
+/// - inference constraints and their causes
+///
+/// As well as graphviz `.dot` visualizations of:
+/// - the region constraints graph
+/// - the region SCC graph
+pub(super) fn dump_nll_mir<'tcx>(
+    infcx: &BorrowckInferCtxt<'tcx>,
     body: &Body<'tcx>,
     regioncx: &RegionInferenceContext<'tcx>,
-    closure_region_requirements: &Option<ClosureRegionRequirements<'_>>,
+    closure_region_requirements: &Option<ClosureRegionRequirements<'tcx>>,
+    borrow_set: &BorrowSet<'tcx>,
 ) {
-    if !dump_enabled(infcx.tcx, "nll", body.source.def_id()) {
-        return;
-    }
+    let tcx = infcx.tcx;
+    let Some(dumper) = MirDumper::new(tcx, "nll", body) else { return };
 
-    dump_mir(infcx.tcx, None, "nll", &0, body, |pass_where, out| {
-        match pass_where {
-            // Before the CFG, dump out the values for each region variable.
-            PassWhere::BeforeCFG => {
-                regioncx.dump_mir(infcx.tcx, out)?;
+    // We want the NLL extra comments printed by default in NLL MIR dumps (they were removed in
+    // #112346). Specifying `-Z mir-include-spans` on the CLI still has priority: for example,
+    // they're always disabled in mir-opt tests to make working with blessed dumps easier.
+    let options = PrettyPrintMirOptions {
+        include_extra_comments: matches!(
+            infcx.tcx.sess.opts.unstable_opts.mir_include_spans,
+            MirIncludeSpans::On | MirIncludeSpans::Nll
+        ),
+    };
+
+    let extra_data = &|pass_where, out: &mut dyn std::io::Write| {
+        emit_nll_mir(tcx, regioncx, closure_region_requirements, borrow_set, pass_where, out)
+    };
+
+    let dumper = dumper.set_extra_data(extra_data).set_options(options);
+
+    dumper.dump_mir(body);
+
+    // Also dump the region constraint graph as a graphviz file.
+    let _: io::Result<()> = try {
+        let mut file = dumper.create_dump_file("regioncx.all.dot", body)?;
+        regioncx.dump_graphviz_raw_constraints(tcx, &mut file)?;
+    };
+
+    // Also dump the region constraint SCC graph as a graphviz file.
+    let _: io::Result<()> = try {
+        let mut file = dumper.create_dump_file("regioncx.scc.dot", body)?;
+        regioncx.dump_graphviz_scc_constraints(tcx, &mut file)?;
+    };
+}
+
+/// Produces the actual NLL MIR sections to emit during the dumping process.
+pub(crate) fn emit_nll_mir<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    regioncx: &RegionInferenceContext<'tcx>,
+    closure_region_requirements: &Option<ClosureRegionRequirements<'tcx>>,
+    borrow_set: &BorrowSet<'tcx>,
+    pass_where: PassWhere,
+    out: &mut dyn io::Write,
+) -> io::Result<()> {
+    match pass_where {
+        // Before the CFG, dump out the values for each region variable.
+        PassWhere::BeforeCFG => {
+            regioncx.dump_mir(tcx, out)?;
+            writeln!(out, "|")?;
+
+            if let Some(closure_region_requirements) = closure_region_requirements {
+                writeln!(out, "| Free Region Constraints")?;
+                for_each_region_constraint(tcx, closure_region_requirements, &mut |msg| {
+                    writeln!(out, "| {msg}")
+                })?;
                 writeln!(out, "|")?;
-
-                if let Some(closure_region_requirements) = closure_region_requirements {
-                    writeln!(out, "| Free Region Constraints")?;
-                    for_each_region_constraint(closure_region_requirements, &mut |msg| {
-                        writeln!(out, "| {}", msg)
-                    })?;
-                    writeln!(out, "|")?;
-                }
             }
 
-            PassWhere::BeforeLocation(_) => {}
-
-            PassWhere::AfterTerminator(_) => {}
-
-            PassWhere::BeforeBlock(_) | PassWhere::AfterLocation(_) | PassWhere::AfterCFG => {}
+            if borrow_set.len() > 0 {
+                writeln!(out, "| Borrows")?;
+                for (borrow_idx, borrow_data) in borrow_set.iter_enumerated() {
+                    writeln!(
+                        out,
+                        "| {:?}: issued at {:?} in {:?}",
+                        borrow_idx, borrow_data.reserve_location, borrow_data.region
+                    )?;
+                }
+                writeln!(out, "|")?;
+            }
         }
-        Ok(())
-    });
 
-    // Also dump the inference graph constraints as a graphviz file.
-    let _: io::Result<()> = try {
-        let mut file =
-            create_dump_file(infcx.tcx, "regioncx.all.dot", None, "nll", &0, body.source)?;
-        regioncx.dump_graphviz_raw_constraints(&mut file)?;
-    };
+        PassWhere::BeforeLocation(_) => {}
 
-    // Also dump the inference graph constraints as a graphviz file.
-    let _: io::Result<()> = try {
-        let mut file =
-            create_dump_file(infcx.tcx, "regioncx.scc.dot", None, "nll", &0, body.source)?;
-        regioncx.dump_graphviz_scc_constraints(&mut file)?;
-    };
+        PassWhere::AfterTerminator(_) => {}
+
+        PassWhere::BeforeBlock(_) | PassWhere::AfterLocation(_) | PassWhere::AfterCFG => {}
+    }
+    Ok(())
 }
 
-pub(super) fn dump_annotation<'a, 'tcx>(
-    infcx: &InferCtxt<'a, 'tcx>,
+#[allow(rustc::diagnostic_outside_of_impl)]
+#[allow(rustc::untranslatable_diagnostic)]
+pub(super) fn dump_annotation<'tcx, 'infcx>(
+    infcx: &'infcx BorrowckInferCtxt<'tcx>,
     body: &Body<'tcx>,
     regioncx: &RegionInferenceContext<'tcx>,
-    closure_region_requirements: &Option<ClosureRegionRequirements<'_>>,
-    opaque_type_values: &VecMap<OpaqueTypeKey<'tcx>, Ty<'tcx>>,
-    errors_buffer: &mut Vec<Diagnostic>,
+    closure_region_requirements: &Option<ClosureRegionRequirements<'tcx>>,
 ) {
     let tcx = infcx.tcx;
     let base_def_id = tcx.typeck_root_def_id(body.source.def_id());
@@ -383,24 +303,25 @@ pub(super) fn dump_annotation<'a, 'tcx>(
 
     // When the enclosing function is tagged with `#[rustc_regions]`,
     // we dump out various bits of state as warnings. This is useful
-    // for verifying that the compiler is behaving as expected.  These
+    // for verifying that the compiler is behaving as expected. These
     // warnings focus on the closure region requirements -- for
     // viewing the intraprocedural state, the -Zdump-mir output is
     // better.
 
-    let mut err = if let Some(closure_region_requirements) = closure_region_requirements {
-        let mut err = tcx.sess.diagnostic().span_note_diag(body.span, "external requirements");
+    let def_span = tcx.def_span(body.source.def_id());
+    let err = if let Some(closure_region_requirements) = closure_region_requirements {
+        let mut err = infcx.dcx().struct_span_note(def_span, "external requirements");
 
         regioncx.annotate(tcx, &mut err);
 
-        err.note(&format!(
+        err.note(format!(
             "number of external vids: {}",
             closure_region_requirements.num_external_vids
         ));
 
         // Dump the region constraints we are imposing *between* those
         // newly created variables.
-        for_each_region_constraint(closure_region_requirements, &mut |msg| {
+        for_each_region_constraint(tcx, closure_region_requirements, &mut |msg| {
             err.note(msg);
             Ok(())
         })
@@ -408,54 +329,35 @@ pub(super) fn dump_annotation<'a, 'tcx>(
 
         err
     } else {
-        let mut err = tcx.sess.diagnostic().span_note_diag(body.span, "no external requirements");
+        let mut err = infcx.dcx().struct_span_note(def_span, "no external requirements");
         regioncx.annotate(tcx, &mut err);
-
         err
     };
 
-    if !opaque_type_values.is_empty() {
-        err.note(&format!("Inferred opaque type values:\n{:#?}", opaque_type_values));
-    }
-
-    err.buffer(errors_buffer);
+    // FIXME(@lcnr): We currently don't dump the inferred hidden types here.
+    err.emit();
 }
 
-fn for_each_region_constraint(
-    closure_region_requirements: &ClosureRegionRequirements<'_>,
-    with_msg: &mut dyn FnMut(&str) -> io::Result<()>,
+fn for_each_region_constraint<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    closure_region_requirements: &ClosureRegionRequirements<'tcx>,
+    with_msg: &mut dyn FnMut(String) -> io::Result<()>,
 ) -> io::Result<()> {
     for req in &closure_region_requirements.outlives_requirements {
-        let subject: &dyn Debug = match &req.subject {
-            ClosureOutlivesSubject::Region(subject) => subject,
-            ClosureOutlivesSubject::Ty(ty) => ty,
+        let subject = match req.subject {
+            ClosureOutlivesSubject::Region(subject) => format!("{subject:?}"),
+            ClosureOutlivesSubject::Ty(ty) => {
+                with_no_trimmed_paths!(format!(
+                    "{}",
+                    ty.instantiate(tcx, |vid| ty::Region::new_var(tcx, vid))
+                ))
+            }
         };
-        with_msg(&format!("where {:?}: {:?}", subject, req.outlived_free_region,))?;
+        with_msg(format!("where {}: {:?}", subject, req.outlived_free_region,))?;
     }
     Ok(())
 }
 
-/// Right now, we piggy back on the `ReVar` to store our NLL inference
-/// regions. These are indexed with `RegionVid`. This method will
-/// assert that the region is a `ReVar` and extract its internal index.
-/// This is reasonable because in our MIR we replace all universal regions
-/// with inference variables.
-pub trait ToRegionVid {
-    fn to_region_vid(self) -> RegionVid;
-}
-
-impl<'tcx> ToRegionVid for &'tcx RegionKind {
-    fn to_region_vid(self) -> RegionVid {
-        if let ty::ReVar(vid) = self { *vid } else { bug!("region is not an ReVar: {:?}", self) }
-    }
-}
-
-impl ToRegionVid for RegionVid {
-    fn to_region_vid(self) -> RegionVid {
-        self
-    }
-}
-
-crate trait ConstraintDescription {
+pub(crate) trait ConstraintDescription {
     fn description(&self) -> &'static str;
 }

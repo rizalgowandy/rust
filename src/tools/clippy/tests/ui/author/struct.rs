@@ -1,4 +1,11 @@
-#[allow(clippy::unnecessary_operation, clippy::single_match)]
+//@ check-pass
+
+#![allow(
+    clippy::unnecessary_operation,
+    clippy::single_match,
+    clippy::no_effect,
+    clippy::bool_to_int_with_if
+)]
 fn main() {
     struct Test {
         field: u32,

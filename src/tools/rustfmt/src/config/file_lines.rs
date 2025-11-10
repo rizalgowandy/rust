@@ -3,19 +3,19 @@
 use itertools::Itertools;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::{cmp, fmt, iter, str};
 
-use rustc_data_structures::sync::Lrc;
-use rustc_span::{self, SourceFile};
-use serde::{ser, Deserialize, Deserializer, Serialize, Serializer};
+use rustc_span::SourceFile;
+use serde::{Deserialize, Deserializer, Serialize, Serializer, ser};
 use serde_json as json;
 use thiserror::Error;
 
 /// A range of lines in a file, inclusive of both ends.
 pub struct LineRange {
-    pub file: Lrc<SourceFile>,
-    pub lo: usize,
-    pub hi: usize,
+    pub(crate) file: Arc<SourceFile>,
+    pub(crate) lo: usize,
+    pub(crate) hi: usize,
 }
 
 /// Defines the name of an input - either a file or stdin.
@@ -38,8 +38,8 @@ impl From<rustc_span::FileName> for FileName {
 impl fmt::Display for FileName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            FileName::Real(p) => write!(f, "{}", p.to_str().unwrap()),
-            FileName::Stdin => write!(f, "stdin"),
+            FileName::Real(p) => write!(f, "{}", p.display()),
+            FileName::Stdin => write!(f, "<stdin>"),
         }
     }
 }
@@ -75,7 +75,7 @@ impl Serialize for FileName {
 }
 
 impl LineRange {
-    pub fn file_name(&self) -> FileName {
+    pub(crate) fn file_name(&self) -> FileName {
         self.file.name.clone().into()
     }
 }
@@ -162,7 +162,7 @@ impl fmt::Display for FileLines {
             None => write!(f, "None")?,
             Some(map) => {
                 for (file_name, ranges) in map.iter() {
-                    write!(f, "{}: ", file_name)?;
+                    write!(f, "{file_name}: ")?;
                     write!(f, "{}\n", ranges.iter().format(", "))?;
                 }
             }
@@ -201,7 +201,7 @@ impl FileLines {
     }
 
     /// Returns `true` if this `FileLines` contains all lines in all files.
-    pub(crate) fn is_all(&self) -> bool {
+    pub fn is_all(&self) -> bool {
         self.0.is_none()
     }
 

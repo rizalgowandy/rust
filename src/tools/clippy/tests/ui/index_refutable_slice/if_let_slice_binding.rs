@@ -1,4 +1,5 @@
 #![deny(clippy::index_refutable_slice)]
+#![allow(clippy::needless_lifetimes, clippy::collapsible_if)]
 
 enum SomeEnum<T> {
     One(T),
@@ -11,18 +12,24 @@ fn lintable_examples() {
     // Try with reference
     let slice: Option<&[u32]> = Some(&[1, 2, 3]);
     if let Some(slice) = slice {
+        //~^ index_refutable_slice
+
         println!("{}", slice[0]);
     }
 
     // Try with copy
     let slice: Option<[u32; 3]> = Some([1, 2, 3]);
     if let Some(slice) = slice {
+        //~^ index_refutable_slice
+
         println!("{}", slice[0]);
     }
 
     // Try with long slice and small indices
     let slice: Option<[u32; 9]> = Some([1, 2, 3, 4, 5, 6, 7, 8, 9]);
     if let Some(slice) = slice {
+        //~^ index_refutable_slice
+
         println!("{}", slice[2]);
         println!("{}", slice[0]);
     }
@@ -30,6 +37,8 @@ fn lintable_examples() {
     // Multiple bindings
     let slice_wrapped: SomeEnum<[u32; 3]> = SomeEnum::One([5, 6, 7]);
     if let SomeEnum::One(slice) | SomeEnum::Three(slice) = slice_wrapped {
+        //~^ index_refutable_slice
+
         println!("{}", slice[0]);
     }
 
@@ -37,6 +46,9 @@ fn lintable_examples() {
     let a_wrapped: SomeEnum<[u32; 3]> = SomeEnum::One([9, 5, 1]);
     let b_wrapped: Option<[u32; 2]> = Some([4, 6]);
     if let (SomeEnum::Three(a), Some(b)) = (a_wrapped, b_wrapped) {
+        //~^ index_refutable_slice
+        //~| index_refutable_slice
+
         println!("{} -> {}", a[2], b[1]);
     }
 
@@ -44,17 +56,21 @@ fn lintable_examples() {
     // borrowed and `String` doesn't implement copy
     let slice: Option<[String; 2]> = Some([String::from("1"), String::from("2")]);
     if let Some(ref slice) = slice {
+        //~^ index_refutable_slice
+
         println!("{:?}", slice[1]);
     }
-    println!("{:?}", slice);
+    println!("{slice:?}");
 
     // This should not suggest using the `ref` keyword as the scrutinee is already
     // a reference
     let slice: Option<[String; 2]> = Some([String::from("1"), String::from("2")]);
     if let Some(slice) = &slice {
+        //~^ index_refutable_slice
+
         println!("{:?}", slice[0]);
     }
-    println!("{:?}", slice);
+    println!("{slice:?}");
 }
 
 fn slice_index_above_limit() {
@@ -97,7 +113,7 @@ fn check_slice_as_arg() {
             println!("This is interesting {}", slice[0]);
         }
     }
-    println!("{:?}", slice_wrapped);
+    println!("{slice_wrapped:?}");
 }
 
 fn check_slice_in_struct() {
@@ -121,6 +137,8 @@ fn check_slice_in_struct() {
 
     // Test 1: Field access
     if let Some(slice) = wrap.inner {
+        //~^ index_refutable_slice
+
         if wrap.is_awesome {
             println!("This is awesome! {}", slice[0]);
         }
@@ -128,11 +146,13 @@ fn check_slice_in_struct() {
 
     // Test 2: function access
     if let Some(slice) = wrap.inner {
+        //~^ index_refutable_slice
+
         if wrap.is_super_awesome() {
             println!("This is super awesome! {}", slice[0]);
         }
     }
-    println!("Complete wrap: {:?}", wrap);
+    println!("Complete wrap: {wrap:?}");
 }
 
 /// This would be a nice additional feature to have in the future, but adding it
@@ -144,14 +164,14 @@ fn mutable_slice_index() {
     if let Some(ref mut slice) = slice {
         slice[0] = String::from("Mr. Penguin");
     }
-    println!("Use after modification: {:?}", slice);
+    println!("Use after modification: {slice:?}");
 
     // Mut access on reference
     let mut slice: Option<[String; 1]> = Some([String::from("Cat")]);
     if let Some(slice) = &mut slice {
         slice[0] = String::from("Lord Meow Meow");
     }
-    println!("Use after modification: {:?}", slice);
+    println!("Use after modification: {slice:?}");
 }
 
 /// The lint will ignore bindings with sub patterns as it would be hard
